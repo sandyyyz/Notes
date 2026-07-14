@@ -38,6 +38,7 @@ A sample code fragment that does an RCU read-to-update upgrade follows:
 ```
 
 ## reference
+[RCU Publication](https://docs.google.com/document/d/1X0lThx8OK0ZgLMqVoXiR4ZrGURHrXK6NyLRbeXe3Xac/edit?pli=1&tab=t.0)
 [Reader-Writer-Locking/RCU Analogy ](https://www.usenix.org/legacy/publications/library/proceedings/usenix03/tech/freenix03/full_papers/arcangeli/arcangeli_html/node7.html)
 [what's rcu--usage](https://lwn.net/Articles/263130/#RCU%20is%20a%20Reader-Writer%20Lock%20Replacement)
 [The design of preemptible read-copy-update](https://lwn.net/Articles/253651/)
