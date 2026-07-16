@@ -113,20 +113,79 @@ Linux make sure readers arrived after the waiting writer need to be queued to pr
 
 ## RCU
 
-A sample code fragment that does an RCU read-to-update upgrade follows:
-```c 
-  1 rcu_read_lock();
-  2 list_for_each_entry_rcu(p, head, list_field) {
-  3   do_something_with(p);
-  4   if (need_update(p)) {
-  5     spin_lock(&my_lock);
-  6     do_update(p);
-  7     spin_unlock(&my_lock);
-  8   }
-  9 }
- 10 rcu_read_unlock();
+RCU is the mechanism that ensuring reads are coherent by maintaining multiple vserions of object and ensuring that they are not freed up untill all pre-existing read-side critical sections complete.  
+
+
+RCU is made up of three fundamental mechanisms:  
+1. publish-subscribe
+2. wait for pre-readers to complete
+3. multiple versions of recently updated objects
+
+### publish-subscribe
+
+#### rcu_assign_pointer -- publish 
+
+Think about the code fragment:  
+
+``` c
+  1 struct foo {
+  2   int a;
+  3   int b;
+  4   int c;
+  5 };
+  6 struct foo *gp = NULL;
+  7 
+  8 /* . . . */
+  9 
+ 10 p = kmalloc(sizeof(*p), GFP_KERNEL);
+/** 
+    * nothing forcing the compiler and CPU
+    * to execute the four assignment statement in order
+    * which may cause a comcurrent reader see pointer p
+    * before asisgnment of the value of the struct is completed
+    * which could see the uninitialized values
+* */
+ 11 p->a = 1;
+ 12 p->b = 2;
+ 13 p->c = 3;
+ 14 gp = p;
+```
+
+The **rcu_assign_pointer** is encapsulated to realize a **memory barriers** semantics, which forcing both the compiler and the cpu to execute the assignment to gp after the assignments to the fields referenced by p.*(publish)*
+
+#### rcu_dereference -- subscribe
+
+Without additional memory-barrier instructions, the code:  
+
+``` c
+
+  1 p = gp;
+  2 if (p != NULL) {
+  /**
+    * compiler optimization may cause the values of 
+    *  p->a, p->b, and p->c to be fetched before 
+    *  the value of p is assigned correctly.
+    **/
+  3   do_something_with(p->a, p->b, p->c);
+  4 }
 
 ```
+will be effected by compiler optimizations, which will guess the value of p, the featch p->a and so on.  
+The **rcu_dereference()** primitive can thus be thought of as subscribing to a given value of the specified pointer, guaranteeing that subsequent dereference operations will see any initialization that occurred before the corresponding publish (rcu_assign_pointer()) operation.  
+
+so the correct code will be like:
+
+```c
+
+  1 rcu_read_lock();
+  2 p = rcu_dereference(gp);
+  3 if (p != NULL) {
+  4   do_something_with(p->a, p->b, p->c);
+  5 }
+  6 rcu_read_unlock();
+```
+#### rcu_read_lock and rcu_read_unlock
+Just define the extent of the RCU read-side critical section.  
 
 ## reference
 [RCU Publication](https://docs.google.com/document/d/1X0lThx8OK0ZgLMqVoXiR4ZrGURHrXK6NyLRbeXe3Xac/edit?pli=1&tab=t.0)  
