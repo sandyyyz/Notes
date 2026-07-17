@@ -64,6 +64,7 @@ struct rw_semaphore {
 
 example:(To be supplemented)
 Need to be supplemented at source code level. 
+
 ``` c 
 
 #include <linux/rwsem.h>
@@ -151,6 +152,13 @@ Think about the code fragment:
  14 gp = p;
 ```
 
+so the line-14 should be replaced with:  
+
+```c
+
+rcu_assign_pointer(gp, p)
+
+```
 The **rcu_assign_pointer** is encapsulated to realize a **memory barriers** semantics, which forcing both the compiler and the cpu to execute the assignment to gp after the assignments to the fields referenced by p.*(publish)*
 
 #### rcu_dereference -- subscribe
@@ -187,10 +195,106 @@ so the correct code will be like:
 #### rcu_read_lock and rcu_read_unlock
 Just define the extent of the RCU read-side critical section.  
 
-## reference
+#### higher-level interface for list_head -- list_add_rcu(publish) and list_for_each_entry_rcu(subscribe)
+
+Code fragment:  
+```c
+    /* list_add_rcu */
+  1 struct foo {
+  2   struct list_head list;
+  3   int a;
+  4   int b;
+  5   int c;
+  6 };
+  7 LIST_HEAD(head);
+  8 
+  9 /* . . . */
+ 10 
+ 11 p = kmalloc(sizeof(*p), GFP_KERNEL);
+ 12 p->a = 1;
+ 13 p->b = 2;
+ 14 p->c = 3;
+ 15 list_add_rcu(&p->list, &head);
+
+ /* list_for_each_entry_rcu */
+  1 rcu_read_lock();
+  2 list_for_each_entry_rcu(p, head, list) {
+  3   do_something_with(p->a, p->b, p->c);
+  4 }
+  5 rcu_read_unlock();
+```
+The list_add_rcu() primitive publishes an entry into the specified list, guaranteeing that the corresponding list_for_each_entry_rcu() invocation will properly subscribe to this same entry.
+
+### wait for pre-reader to exit 
+![grace_priod](https://static.lwn.net/images/ns/kernel/rcu/GracePeriodGood.png)
+
+The following pseudocode shows the basic form of algorithms that use RCU to wait for readers:
+
+Make a change, for example, replace an element in a linked list.
+
+Wait for all pre-existing RCU read-side critical sections to completely finish (for example, by using the synchronize_rcu() primitive). The key observation here is that subsequent RCU read-side critical sections have no way to gain a reference to the newly removed element.
+
+Clean up, for example, free the element that was replaced above.
+
+Code fragment:  
+``` c
+
+  1 struct foo {
+  2   struct list_head list;
+  3   int a;
+  4   int b;
+  5   int c;
+  6 };
+  7 LIST_HEAD(head);
+  8
+  9 /* . . . */
+ 10
+ 11 p = search(head, key);
+ 12 if (p == NULL) {
+ 13   /* Take appropriate action, unlock, and return. */
+ 14 }
+ 15 q = kmalloc(sizeof(*p), GFP_KERNEL);
+ 16 *q = *p;
+ 17 q->b = 2;
+ 18 q->c = 3;
+ 19 list_replace_rcu(&p->list, &q->list);
+ 20 synchronize_rcu(); /* grace period start */
+ 21 kfree(p);
+ ```
+ RCU Classic's synchronize_rcu() can conceptually be as simple as the following:
+```c 
+  1 for_each_online_cpu(cpu)
+  2   run_on(cpu);
+  ```
+RCU classic sections delimited by *rcu_read_lock* and *rcu_read_unlock* are not permitted to block or sleep.so:  
+
+when a given CPU executes a context switch, we are guaranteed that any prior RCU read-side critical sections will have completed.   
+
+Attention:  
+Does works on realtime kernels.See realtime-rcu.  
+
+### maintain multiple versions of recently updated objects
+
+#### during deletion
+
+concurrent readers might or might not see the newly removed element, depending on timing.  
+But, readers are not permitted to maintain references to the old object after exiting from their RCU read-side critical sections.After that old object can be freed.
+
+#### during replacement 
+
+Same as deletion.The old period will be freed when grace period ends.During that, readers may see old object.  
+
+command: : On all systems running Linux, loads from and stores to pointers are atomic.  
+
+## references
 [RCU Publication](https://docs.google.com/document/d/1X0lThx8OK0ZgLMqVoXiR4ZrGURHrXK6NyLRbeXe3Xac/edit?pli=1&tab=t.0)  
 [Reader-Writer-Locking/RCU Analogy ](https://www.usenix.org/legacy/publications/library/proceedings/usenix03/tech/freenix03/full_papers/arcangeli/arcangeli_html/node7.html)  
 [what's rcu--usage](https://lwn.net/Articles/263130/#RCU%20is%20a%20Reader-Writer%20Lock%20Replacement)  
 [The design of preemptible read-copy-update](https://lwn.net/Articles/253651/)  
 [relock and rwsem](https://kernel-internals.org/locking/rwlock-rwsem/)
 [what is Rcu, fundamentally?](https://lwn.net/Articles/262464/)
+[realtimem RCU](https://lwn.net/Articles/253651/)
+## expands
+
+- sleepable RCU 
+- preemptible RCU
