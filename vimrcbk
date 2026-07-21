@@ -20,8 +20,8 @@ Plugin 'morhetz/gruvbox'
 Plugin 'godlygeek/tabular'
 Plugin 'plasticboy/vim-markdown'
 Plugin 'suan/vim-instant-Markdown'
-Bundle 'Valloric/YouCompleteMe'
-
+"Bundle 'Valloric/YouCompleteMe'
+Plugin 'vim-scripts/taglist.vim'
 " stop - all plugins above
 call vundle#end()
 filetype plugin indent on
@@ -29,6 +29,8 @@ filetype plugin indent on
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 " => General
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+" make instant_markdown to autostart
+let g:instant_markdown_autostart = 1
 " Sets how many lines of history VIM has to remember
 set history=1000
 
@@ -66,8 +68,8 @@ set mouse=v
 set selection=exclusive
 set selectmode=mouse,key
 
-"set clipboard+=unnamed
-set clipboard=unnamedplus
+set clipboard+=unnamed
+"set clipboard=unnamedplus
 
 set fenc=utf-8
 set fencs=utf-8,usc-bom,euc-jp,gb18030,gbk,gb2312,cp936
@@ -123,7 +125,7 @@ nmap <leader>x :%!xxd<CR>
 "nmap mm :%!xxd -r<CR>
 nmap qq :q!<cr>
 nmap tt :Tlist<cr>
-nmap ww <C-w><C-w>
+"nmap ww <C-w><C-w>
 nmap -- 5<C-w>-
 nmap ++ 5<C-w>+
 nmap >> 5<C-w>>
@@ -179,10 +181,10 @@ map <leader>e :e!
 "map <leader>ba :1,300 bd!<cr>
 " Close the current buffer
 "map <leader>bd :Bclose<cr>
-nmap bd :bdelete<cr>
-nmap vv :bnext<cr>
-nmap zz :bprevious<cr>
-map <leader>u :TMiniBufExplorer<cr>
+"nmap bd :bdelete<cr>
+"nmap vv :bnext<cr>
+"nmap zz :bprevious<cr>
+"map <leader>u :TMiniBufExplorer<cr>
 
 
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -225,7 +227,7 @@ map <leader>ss :setlocal spell!<cr>
 
 let g:winManagerWindowLayout='FileExplorer|TagList'
 "let g:winManagerWindowLayout='FileExplorer'
-nmap wm :WMToggle<cr>
+"nmap wm :WMToggle<cr>
 "map <F4> :WMToggle<CR>
 
 "Taglist
