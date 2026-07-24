@@ -1,10 +1,37 @@
 # Build kernel
+本次采用服务器ubuntu24.04镜像构建container，并在container内部build kernel.  
+首先是编译一个特定版本的完整内核。  
+本次编译的是Linux 7.2.0-rc4内核。  
 
 ## clone kernel code of specific version
 
+首先基于提供的脚本略作修改，创建一个container。具体程序见ubuntu2404.sh。在创建好container后，在container使用git clone将/mnt/repo/下对应的源码目录copy到相应目录下。
+
 ## make menuconfig
 
+make menuconfig 提供了一个方便的图形化界面调整内核编译设置。本次编译暂时未作修改。  
+
 ## make
+
+在调整好编译选项后， 在目录下make即可。本次使用的命令是：  
+
+```cmd
+ make deb-pkg -j20
+```
+由于没有安装需求，本次暂时没有install.
+
+## 基于buildroot构建测试环境
+
+Buildroot 编译出的 Linux 内核与直接克隆内核仓库编译出的内核，可能基于完全相同的 Kbuild 和源码，但默认不能认为二者相同。 Buildroot 通常会控制源码版本、补丁、配置、交叉工具链、构建变量、设备树、模块安装和 rootfs 集成；直接编译则由开发者手工提供这些条件。  
+
+本次构建重心放在这里。按照培训材料中的参考文档，大概有以下几个步骤：  
+1. 下载buildroot源码
+2. 通过 *make qemu_x86_64_defconfig*配置buildroot, 使得编译带有调试符号的packages.
+3. 通过make linux-menuconfig配置编译内核选项，和上面尝试编译一个完整Linux内核是一样的。需要打开*kernel debugging*,*Provide GDB scripts for kernel debugging*,*Generate readable assembler code*, *KGDB: kernel debugger*
+,以便后续调试  
+4. make
+
+关键的调试配置如下：  
 
 ## debug
 
@@ -223,6 +250,12 @@ exec qemu-system-x86_64 -S -gdb tcp:0.0.0.0:1234 -M pc -kernel bzImage -drive fi
 $ docker run -d -p 8080:80 --name nginx-1 nginx
 ```
 此时host端的8080端口被映射到container内的80端口。  
+
+host-gdb:  
+![host-gdb](https://raw.githubusercontent.com/sandyyyz/Image-hosting/main/img/host-gdb.png)
+
+container-qemu:  
+![container-qemu](https://raw.githubusercontent.com/sandyyyz/Image-hosting/main/img/container-qemu.png)
 
 ## Q&A
 
