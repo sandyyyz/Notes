@@ -19,7 +19,8 @@ SYNOPSIS
 
 命令名、选项以及固定关键字需要原样输入。如`strace -p pid`中的`stace`
 
-## 参数占位符
+## 参数占位符<>
+`<pid>`  
 
 pid、file、command等名词表示需要替换为实际词的参数。如`strace -p pid`中的`pid`
 
