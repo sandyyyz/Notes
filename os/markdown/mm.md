@@ -510,3 +510,26 @@ For "special page", return null.
 `pgd(global directory), p4d(4-level), pud(upper), pmd(middle), pte.`  
 
 由此可见Linux采用五级页表，其中`p4d`可以折叠，变成四级页表。
+
+## mmu_notifier
+
+```c
+/*
+ * The notifier chains are protected by mmap_sem and/or the reverse map
+ * semaphores. Notifier chains are only changed when all reverse maps and
+ * the mmap_sem locks are taken.
+ *
+ * Therefore notifier chains can only be traversed when either
+ *
+ * 1. mmap_sem is held.
+ * 2. One of the reverse map locks is held (i_mmap_rwsem or anon_vma->rwsem).
+ * 3. No other concurrent thread can access the list (release)
+ */
+struct mmu_notifier {
+	struct hlist_node hlist;
+	const struct mmu_notifier_ops *ops;
+};
+```
+`mmu_notifier_ops`注册了一系列回调函数，用于在CPU页表发生变化时通知其余子系统。
+
+
