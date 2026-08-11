@@ -282,3 +282,17 @@ https://iximiuz.com/en/posts/docker-publish-container-ports/
 
 https://github.com/bitristan/docker-linux-2.6.26-build
 
+**PS:**  
+先来读一段dockerdocs有关port publish的文档：  
+By default, for both IPv4 and IPv6, the Docker daemon blocks access to ports that have not been published. Published container ports are mapped to host IP addresses. To do this, it uses firewall rules to perform Network Address Translation (NAT), Port Address Translation (PAT), and masquerading.  
+For example, docker run -p 8080:80 [...] creates a mapping between port 8080 on any address on the Docker host, and the container's port 80. Outgoing connections from the container will masquerade, using the Docker host's IP address.  
+When you create or run a container using docker create or docker run, all ports of containers on bridge networks are accessible from the Docker host and other containers connected to the same network. Ports are not accessible from outside the host or, with the default configuration, from containers in other networks.  
+Use the --publish or -p flag to make a port available outside the host, and to containers in other bridge networks.  
+
+```text
+ all ports of containers on bridge networks are accessible from the Docker host and other containers connected to the same network. Ports are not accessible from outside the host or, with the default configuration, from containers in other networks.
+```
+之前一直以为host无法访问container的网络端口，事实上通过显式指定container ip:port是可以访问的。  
+而port publish 实际上解决的问题是“访问container outside the host”，后续实验通过1234:1234， 将host:1234和container:1234做映射。  
+而后在本地wsl(outside the host)成功访问了container的qemu服务。  
+这点需要澄清。
