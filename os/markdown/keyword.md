@@ -9,3 +9,5 @@
 7. folio
 8. THP
 9. struct page -> memory descriptor
+10. MMIO
+11. IOMMU
