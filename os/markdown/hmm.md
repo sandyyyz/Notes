@@ -219,11 +219,7 @@ struct hmm_range {
 pfns数组追踪[start, end)内所有pfns?
 
 
-#### int hmm_vma_get_pfns(struct vm_area_struct *vma,
-		     struct hmm_range *range,
-		     unsigned long start,
-		     unsigned long end,
-		     hmm_pfn_t *pfns);
+#### int hmm_vma_get_pfns(struct vm_area_struct *vma, struct hmm_range *range, unsigned long start, unsigned long end, hmm_pfn_t *pfns);
 
 snap shot CPU page table for a range of virtual addresses.
 
@@ -303,15 +299,74 @@ int hmm_vma_get_pfns(struct vm_area_struct *vma,
 }
 EXPORT_SYMBOL(hmm_vma_get_pfns);
 
-```
+那么`pfns`是在哪里被更新的呢？  
+这里还有一个非常重要的结构体 `mm_walk`
 
-在`hmm_pfn_special`中， 对前`UPPAGE(end - addr)/PGSIZE)`个pfns赋值` HMM_PFN_SPECIAL`
+#### struct mm_walk
 
 ```c
-for (; addr < end; addr += PAGE_SIZE, pfns++)
-		*pfns = HMM_PFN_SPECIAL;
-}
+/**
+ * mm_walk - callbacks for walk_page_range
+ * @pud_entry: if set, called for each non-empty PUD (2nd-level) entry
+ *	       this handler should only handle pud_trans_huge() puds.
+ *	       the pmd_entry or pte_entry callbacks will be used for
+ *	       regular PUDs.
+ * @pmd_entry: if set, called for each non-empty PMD (3rd-level) entry
+ *	       this handler is required to be able to handle
+ *	       pmd_trans_huge() pmds.  They may simply choose to
+ *	       split_huge_page() instead of handling it explicitly.
+ * @pte_entry: if set, called for each non-empty PTE (4th-level) entry
+ * @pte_hole: if set, called for each hole at all levels
+ * @hugetlb_entry: if set, called for each hugetlb entry
+ * @test_walk: caller specific callback function to determine whether
+ *             we walk over the current vma or not. Returning 0
+ *             value means "do page table walk over the current vma,"
+ *             and a negative one means "abort current page table walk
+ *             right now." 1 means "skip the current vma."
+ * @mm:        mm_struct representing the target process of page table walk
+ * @vma:       vma currently walked (NULL if walking outside vmas)
+ * @private:   private data for callbacks' usage
+ *
+ * (see the comment on walk_page_range() for more details)
+ */
+struct mm_walk {
+	int (*pud_entry)(pud_t *pud, unsigned long addr,
+			 unsigned long next, struct mm_walk *walk);
+	int (*pmd_entry)(pmd_t *pmd, unsigned long addr,
+			 unsigned long next, struct mm_walk *walk);
+	int (*pte_entry)(pte_t *pte, unsigned long addr,
+			 unsigned long next, struct mm_walk *walk);
+	int (*pte_hole)(unsigned long addr, unsigned long next,
+			struct mm_walk *walk);
+	int (*hugetlb_entry)(pte_t *pte, unsigned long hmask,
+			     unsigned long addr, unsigned long next,
+			     struct mm_walk *walk);
+	int (*test_walk)(unsigned long addr, unsigned long next,
+			struct mm_walk *walk);
+	struct mm_struct *mm;
+	struct vm_area_struct *vma;
+	void *private;
+};
 ```
+这里的`private`字段在`hmm_vma_get_pfns`中将被赋值`&hmm_vma_walk`.  
+
+```c
+struct hmm_vma_walk {
+	struct hmm_range	*range;
+	unsigned long		last;
+	bool			fault;
+	bool			block;
+	bool			write;
+};
+```
+
+`hmm_range`用于追踪指定虚拟地址范围内的页表失效事件。其中包含我们关注的 `pfns`.  
+由于`hmm_vma_get_pfns`中的  
+
+``` mm_walk.pmd_entry = hmm_vma_walk_pmd;```
+
+这行单独设置了`pmd`的callback fuction,`walk_page_range(start, end, walk)`遍历页表时，会将对应的`pfns`状态更新  
+在walk pagetable的过程中，会通过`*private`找到`hmm_vma_walk`，从而找到`range->pfns`, 并且更新`pfns`的有效状态。  
 
 #### hmm_devmem_ops
 
