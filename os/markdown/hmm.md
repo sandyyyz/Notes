@@ -92,7 +92,7 @@ struct hmm_mirror {
 	struct list_head		list;
 };
 ```
-这是hmm中per device的一个数据结构，而hmm是mm-unique的。
+这是hmm中per device的一个数据结构，而hmm是mm-unique的。hmm将通过mirrors链表追踪address space中所有设备注册的mirror.  
 
 #### struct hmm
 
@@ -443,9 +443,12 @@ struct hmm_devmem_ops {
 
 ```
 
-#### hmm_demem
+按照描述，这两个函数是device memory相关的callback.此时pgtble指向的内存并不在CPU这端，需要free 一块 device memory, 或者是CPU访问到这块内存时，产生一个pagefault，将对应设备内存迁移回CPU端。
+
+#### struct hmm_demem
 
 struct to track device memory.  
+
 ```c
 /*
  * struct hmm_devmem - track device memory
@@ -475,6 +478,101 @@ struct hmm_devmem {
 	struct dev_pagemap		pagemap;
 	const struct hmm_devmem_ops	*ops;
 	struct percpu_ref		ref;
+};
+```
+
+
+##### struct completion
+
+
+struct completion 是 Linux 内核中的一种一次性事件同步机制，用于让一个执行上下文等待另一个执行上下文完成某项工作。这里是使用一个FIFO队列实现的。  
+
+```c
+/*
+ * struct completion - structure used to maintain state for a "completion"
+ *
+ * This is the opaque structure used to maintain the state for a "completion".
+ * Completions currently use a FIFO to queue threads that have to wait for
+ * the "completion" event.
+ *
+ * See also:  complete(), wait_for_completion() (and friends _timeout,
+ * _interruptible, _interruptible_timeout, and _killable), init_completion(),
+ * reinit_completion(), and macros DECLARE_COMPLETION(),
+ * DECLARE_COMPLETION_ONSTACK().
+ */
+struct completion {
+	unsigned int done;
+	wait_queue_head_t wait;
+#ifdef CONFIG_LOCKDEP_COMPLETIONS
+	struct lockdep_map_cross map;
+#endif
+};
+
+```
+
+##### struct resource
+
+```c
+/*
+ * Resources are tree-like, allowing
+ * nesting etc..
+ */
+struct resource {
+	resource_size_t start;
+	resource_size_t end;
+	const char *name;
+	unsigned long flags;
+	unsigned long desc;
+	struct resource *parent, *sibling, *child;
+};
+```
+struct resource 用于描述并管理 Linux 内核中的一段硬件资源区间，例如物理内存、I/O 端口、PCI BAR 和中断号等。内核把资源组织成树，以表达资源的包含、并列关系，并检测区间冲突。
+
+##### struct dev_pagemap
+
+dev_pagemap 是一段 ZONE_DEVICE 内存的描述符，使设备内存能够拥有 struct page，并接入内核的缺页、引用和回收机制。
+
+```c
+/**
+ * struct dev_pagemap - metadata for ZONE_DEVICE mappings
+ * @page_fault: callback when CPU fault on an unaddressable device page
+ * @page_free: free page callback when page refcount reaches 1
+ * @altmap: pre-allocated/reserved memory for vmemmap allocations
+ * @res: physical address range covered by @ref
+ * @ref: reference count that pins the devm_memremap_pages() mapping
+ * @dev: host device of the mapping for debug
+ * @data: private data pointer for page_free()
+ * @type: memory type: see MEMORY_* in memory_hotplug.h
+ */
+struct dev_pagemap {
+	dev_page_fault_t page_fault;
+	dev_page_free_t page_free;
+	struct vmem_altmap *altmap;
+	const struct resource *res;
+	struct percpu_ref *ref;
+	struct device *dev;
+	void *data;
+	enum memory_type type;
+};
+
+```
+
+##### struct percpu_ref
+
+percpu_ref 是针对高频 get/put 优化的引用计数，平时使用每 CPU 计数提高性能，销毁阶段切换为原子计数以准确判断引用是否归零。
+
+```c
+struct percpu_ref {
+	atomic_long_t		count;
+	/*
+	 * The low bit of the pointer indicates whether the ref is in percpu
+	 * mode; if set, then get/put will manipulate the atomic_t.
+	 */
+	unsigned long		percpu_count_ptr;
+	percpu_ref_func_t	*release;
+	percpu_ref_func_t	*confirm_switch;
+	bool			force_atomic:1;
+	struct rcu_head		rcu;
 };
 ```
 
@@ -644,6 +742,8 @@ struct migrate_vma_ops {
 };
 
 ```
+
+## v4.14-hmm.c
 
 ## refs
 
