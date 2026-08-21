@@ -1,2 +1,50 @@
-# README
-These are my personal study notes, which will be continuously update...
+# Notes
+
+Personal study notes on the Linux kernel, operating systems, and related
+tooling. Continuously updated.
+
+## Layout
+
+```
+.
+├── os/                # OS / kernel notes, scripts and configs
+│   ├── config/        # editor / debugger configs (.gdbinit)
+│   ├── markdown/      # notes written in Markdown
+│   ├── pdf/           # PDF exports generated from Markdown
+│   └── scripts/       # helper shell scripts
+├── vimrcbk            # backup of my .vimrc
+├── LICENSE            # GPLv3
+└── README
+```
+
+## Topics
+
+The notes under `os/markdown/` cover, roughly:
+
+- **Memory management** — `mm.md`, `hmm.md`, `cxl.md`, `IAA.md`, `QPL.md`
+- **Synchronization** — `linux_sync.md`, `rwlock_rcu.md`, `harzard_pointer.md`
+- **Boot & linking** — `system_boot.md`, `pxe_ipxe.md`, `dynamic_link.md`
+- **Kernel tooling** — `strace.md`, `ftrace.md`, `build_debug_kernel.md`
+- **C / toolchain** — `__attibute__.md`, `synopsis.md`
+- **Misc** — `docker.md`, `scp.md`, `vimrc.md`, `chat.md`
+- `keyword.md` tracks topics to dig into next (CXL, famfs, HMM, DAX, memcg,
+  tiered-memory, folio, THP, MMIO, IOMMU, ...).
+
+## Scripts
+
+| Script | Purpose |
+| --- | --- |
+| `os/scripts/md2pdf.sh` | Convert a Markdown file to PDF via Pandoc + XeLaTeX (CJK aware). Run `os/scripts/md2pdf.sh -h` for options. |
+| `os/scripts/start-qemu.sh` | Boot a kernel + rootfs in QEMU (`bzImage` / `rootfs.ext2`), with `--serial-only` and `--use-system-qemu` modes. |
+| `os/scripts/ubuntu2404.sh` | Create / reuse a per-user `ubuntu:24.04` Docker container for kernel builds. |
+
+## Configs
+
+- `os/config/.gdbinit` — GDB setup for debugging a Linux kernel over the QEMU
+  gdbstub (`127.0.0.1:1234`), with TUI layouts and helper commands
+  (`kcontext`, `kmodules`, `reconnect`).
+- `vimrcbk` — my `.vimrc` (Vundle plugins, cscope integration, key mappings).
+
+## License
+
+GPLv3 — see [LICENSE](LICENSE).
