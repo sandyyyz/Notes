@@ -1302,6 +1302,59 @@ Executing(%clean): /bin/sh -e /var/tmp/rpm-tmp.alJMN9
 + exit 0
 ```
 
+### install kernel by rpms
+
+`dnf install xx.rpm` or `rpm -ivh <--oldpackage>`
+
+验证：  
+```sh
+[root@localhost rpms]# rpm -q kernel kernel-core kernel-modules-core kernel-modules
+kernel-5.14.0-611.5.1.el9_7.x86_64
+kernel-5.14.0-503.40.1.el9.x86_64
+kernel-core-5.14.0-611.5.1.el9_7.x86_64
+kernel-core-5.14.0-503.40.1.el9.x86_64
+kernel-modules-core-5.14.0-611.5.1.el9_7.x86_64
+kernel-modules-core-5.14.0-503.40.1.el9.x86_64
+kernel-modules-5.14.0-611.5.1.el9_7.x86_64
+kernel-modules-5.14.0-503.40.1.el9.x86_64
+```
+
+检查默认启动内核：  
+```sh
+
+[root@localhost rpms]# grubby --default-kernel
+/boot/vmlinuz-5.14.0-503.40.1.el9.x86_64
+
+# 查看kernel
+
+grubby --info ALL | grep "^kernel"
+
+# 所有信息
+
+[root@localhost rpms]# grubby --info ALL
+index=0
+kernel="/boot/vmlinuz-5.14.0-611.5.1.el9_7.x86_64"
+args="ro crashkernel=1G-2G:192M,2G-64G:256M,64G-:512M resume=/dev/mapper/rhel00-swap rd.lvm.lv=rhel00/root rd.lvm.lv=rhel00/swap rhgb quiet $tuned_params"
+root="/dev/mapper/rhel00-root"
+initrd="/boot/initramfs-5.14.0-611.5.1.el9_7.x86_64.img $tuned_initrd"
+title="Red Hat Enterprise Linux (5.14.0-611.5.1.el9_7.x86_64) 9.7 (Plow)"
+id="69dd623190cb45aabfed1570bd80b5eb-5.14.0-611.5.1.el9_7.x86_64"
+index=1
+kernel="/boot/vmlinuz-5.14.0-503.40.1.el9.x86_64"
+args="ro crashkernel=1G-2G:192M,2G-64G:256M,64G-:512M resume=/dev/mapper/rhel00-swap rd.lvm.lv=rhel00/root rd.lvm.lv=rhel00/swap rhgb quiet $tuned_params"
+root="/dev/mapper/rhel00-root"
+initrd="/boot/initramfs-5.14.0-503.40.1.el9.x86_64.img $tuned_initrd"
+title="Red Hat Enterprise Linux (5.14.0-503.40.1.el9.x86_64) 9.7 (Plow)"
+id="69dd623190cb45aabfed1570bd80b5eb-5.14.0-503.40.1.el9.x86_64"
+index=2
+kernel="/boot/vmlinuz-0-rescue-69dd623190cb45aabfed1570bd80b5eb"
+args="ro crashkernel=1G-2G:192M,2G-64G:256M,64G-:512M resume=/dev/mapper/rhel00-swap rd.lvm.lv=rhel00/root rd.lvm.lv=rhel00/swap rhgb quiet"
+root="/dev/mapper/rhel00-root"
+initrd="/boot/initramfs-0-rescue-69dd623190cb45aabfed1570bd80b5eb.img"
+title="Red Hat Enterprise Linux (0-rescue-69dd623190cb45aabfed1570bd80b5eb) 9.7 (Plow)"
+id="69dd623190cb45aabfed1570bd80b5eb-0-rescue"
+```
+
 ## refs
 
 read this :
