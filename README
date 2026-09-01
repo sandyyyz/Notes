@@ -23,11 +23,11 @@ tooling. Continuously updated.
 The notes under `os/markdown/` cover, roughly:
 
 - **Memory management** — `mm.md`, `hmm.md`, `cxl.md`, `IAA.md`, `QPL.md`
-- **Synchronization** — `linux_sync.md`, `rwlock_rcu.md`, `harzard_pointer.md`
+- **Synchronization** — `linux_sync.md`, `rwlock_rcu.md`, `hazard_pointer.md`
 - **Boot & linking** — `system_boot.md`, `pxe_ipxe.md`, `dynamic_link.md`,
   `systemV_abi.md`
 - **Kernel tooling** — `strace.md`, `ftrace.md`, `build_debug_kernel.md`
-- **C / toolchain** — `__attibute__.md`, `synopsis.md`
+- **C / toolchain** — `__attribute__.md`, `synopsis.md`
 - **Misc** — `docker.md`, `scp.md`, `vimrc.md`, `chat.md`
 - `keyword.md` tracks topics to dig into next (CXL, famfs, HMM, DAX, memcg,
   tiered-memory, folio, THP, MMIO, IOMMU, ...).
