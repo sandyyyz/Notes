@@ -12,6 +12,7 @@ tooling. Continuously updated.
 │   ├── markdown/      # notes written in Markdown
 │   ├── pdf/           # PDF exports generated from Markdown
 │   └── scripts/       # helper shell scripts
+├── local/             # local notes (separate git repo, not pushed)
 ├── vimrcbk            # backup of my .vimrc
 ├── LICENSE            # GPLv3
 └── README
@@ -23,7 +24,8 @@ The notes under `os/markdown/` cover, roughly:
 
 - **Memory management** — `mm.md`, `hmm.md`, `cxl.md`, `IAA.md`, `QPL.md`
 - **Synchronization** — `linux_sync.md`, `rwlock_rcu.md`, `harzard_pointer.md`
-- **Boot & linking** — `system_boot.md`, `pxe_ipxe.md`, `dynamic_link.md`
+- **Boot & linking** — `system_boot.md`, `pxe_ipxe.md`, `dynamic_link.md`,
+  `systemV_abi.md`
 - **Kernel tooling** — `strace.md`, `ftrace.md`, `build_debug_kernel.md`
 - **C / toolchain** — `__attibute__.md`, `synopsis.md`
 - **Misc** — `docker.md`, `scp.md`, `vimrc.md`, `chat.md`
@@ -44,6 +46,12 @@ The notes under `os/markdown/` cover, roughly:
   gdbstub (`127.0.0.1:1234`), with TUI layouts and helper commands
   (`kcontext`, `kmodules`, `reconnect`).
 - `vimrcbk` — my `.vimrc` (Vundle plugins, cscope integration, key mappings).
+
+## Local notes
+
+`local/` is a separate git repository for notes that stay on this machine
+(work-in-progress bug investigations, internal tracker IDs). It is not pushed
+and has its own README — see `local/README`.
 
 ## License
 
