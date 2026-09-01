@@ -1,4 +1,5 @@
 # QPL
 
-[QPL](https://github.com/intel/qpl/)  
-The Intel® Query Processing Library (Intel® QPL) is an open-source library to provide high-performance query processing operations on Intel CPUs.
+[QPL (Intel Query Processing Library)](https://github.com/intel/qpl/) 是一个开源库，为 Intel CPU 提供高性能查询处理操作。
+
+详见 [IAA.md](./IAA.md)。

@@ -1,7 +1,8 @@
-# harzard pointer
-Like RCU, hazard pointers are meant to be a way to hold a short-lived reference to an immutable object that may disappear once all references are gone. Code holding references to RCU-protected data must disable preemption; hazard pointers, instead, appear to be designed to allow preemption, though such use may not be entirely optimal.
+# Hazard Pointer
 
-# Linux 内核 Hazard Pointer 提案概述
+与 RCU 类似，hazard pointer 用于在对象可能被释放时持有其短期引用。RCU 保护的代码必须禁用抢占，而 hazard pointer 的设计则允许抢占，尽管这种用法未必最优。
+
+## Linux 内核 Hazard Pointer 提案概述
 
 > 本文总结 LWN.net 文章《Hazard pointers for the kernel》所讨论的 Linux 内核 Hazard Pointer 提案。该方案旨在补充 RCU、SRCU 和引用计数等现有对象生命周期管理机制。目前相关补丁仍处于 RFC 阶段，并非稳定内核接口。
 
@@ -195,7 +196,3 @@ RCU 通过等待旧读者全部结束来保证对象安全回收，而 Hazard Po
 - LWN.net, *Hazard pointers for the kernel*: <https://lwn.net/Articles/1084015/>
 - RFC v2, *Simple hazard-pointer implementation and torture tests*: <https://lwn.net/Articles/1083227/>
 - 早期 RFC, *Add hazard pointers to kernel*: <https://lkml.org/lkml/2024/9/17/602>
-
-## refs
-
-[lwn_hazard_pointer](https://lwn.net/Articles/1084015/)

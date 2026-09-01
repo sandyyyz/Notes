@@ -13,10 +13,10 @@ make menuconfig 提供了一个方便的图形化界面调整内核编译设置�
 
 ## make
 
-在调整好编译选项后， 在目录下make即可。本次使用的命令是：
+在调整好编译选项后，在目录下 make 即可。本次使用的命令是：
 
-```cmd
- make deb-pkg -j20
+```sh
+make deb-pkg -j20
 ```
 由于没有安装需求，本次暂时没有install.
 
@@ -25,13 +25,13 @@ make menuconfig 提供了一个方便的图形化界面调整内核编译设置�
 Buildroot 编译出的 Linux 内核与直接克隆内核仓库编译出的内核，可能基于完全相同的 Kbuild 和源码，但默认不能认为二者相同。 Buildroot 通常会控制源码版本、补丁、配置、交叉工具链、构建变量、设备树、模块安装和 rootfs 集成；直接编译则由开发者手工提供这些条件。
 
 本次构建重心放在这里。按照培训材料中的参考文档，大概有以下几个步骤：
-1. 下载buildroot源码
-2. 通过 *make qemu_x86_64_defconfig*配置buildroot, 使得编译带有调试符号的packages.
-3. 通过make linux-menuconfig配置编译内核选项，和上面尝试编译一个完整Linux内核是一样的。需要打开*kernel debugging*,*Provide GDB scripts for kernel debugging*,*Generate readable assembler code*, *KGDB: kernel debugger*
-,以便后续调试
+
+1. 下载 buildroot 源码
+2. 通过 `make qemu_x86_64_defconfig` 配置 buildroot，使得编译带有调试符号的 packages
+3. 通过 `make linux-menuconfig` 配置编译内核选项，和上面尝试编译一个完整 Linux 内核是一样的。需要打开 *kernel debugging*、*Provide GDB scripts for kernel debugging*、*Generate readable assembler code*、*KGDB: kernel debugger*，以便后续调试
 4. make
 
-关键的调试配置如下：
+TODO: 关键的调试配置如下：
 
 ## debug
 
@@ -164,13 +164,13 @@ tui enable
 # tui new-layout kall {-horizontal src 1 asm 1} 2 status 0 {-horizontal cmd 1 regs 1} 1
 
 # layout kall
-# Set a new layout with src and asm and regs split horizonatally
+# Set a new layout with src and asm and regs split horizontally
 tui new-layout allsplit \
 {-horizontal src 3 asm 3 regs 2} 2 \
 status 0 \
 cmd 1
 
-# Set a layout with src and asm split horizontailly
+# Set a layout with src and asm split horizontally
 tui new-layout hsplit \
 {-horizontal src 1 asm 1} 2 \
 status 0 \
@@ -246,8 +246,8 @@ exec qemu-system-x86_64 -S -gdb tcp:0.0.0.0:1234 -M pc -kernel bzImage -drive fi
 这张图很好地展示了流程：
 ![container port publish](https://iximiuz.com/docker-publish-container-ports/docker-engine-port-publishing-2000-opt.png)
 启动参数为：
-```cmd
-$ docker run -d -p 8080:80 --name nginx-1 nginx
+```sh
+docker run -d -p 8080:80 --name nginx-1 nginx
 ```
 此时host端的8080端口被映射到container内的80端口。
 
@@ -262,10 +262,14 @@ container-qemu:
 Q: 这里有一个关键问题, container通过namespace机制和外界隔离，拥有独立的网络视图，那么此时host-gdb该如何访问container qemu所监听的网络接口呢？
 A: 参见[port_publishing](https://docs.docker.com/engine/network/port-publishing/),docker允许“publish a container's port(s) to the host".为了实现这个功能，需要在docker run时通过-p指定需要publish的端口。
 其语法格式如下：
-docker run -p [host_ip] : host_port : container_post.
-这里的port是针对tcp连接而言的，官方还提供了publish UDP端口的方法，在此不赘述。
 
-Q: 为什么这里是"publish a container's port", 而不是"publish a constainer's ip:port"?
+```sh
+docker run -p [host_ip]:host_port:container_port
+```
+
+这里的 port 是针对 tcp 连接而言的，官方还提供了 publish UDP 端口的方法，在此不赘述。
+
+Q: 为什么这里是 "publish a container's port"，而不是 "publish a container's ip:port"？
 A: 容器端不需要在 -p 中写 IP，并不只是因为创建时 IP 尚未确定，而是因为目标容器和目标网络端点已经由 Docker 配置上下文确定。不需要显式指定。
 
 Q: 在"publish a container's port"之后，container's qemu为什么监听的是"0.0.0.0:1234",即允许来自所有ip地址的port 1234的连接？
@@ -528,7 +532,7 @@ bash-5.1# grep -n -A 25 -B 5 'struct sched_attr' tools/tracing/rtla/src/utils.h
 bash-5.1#
 ```
 
-检索到上游有相关的patches修复了对应的问题:[collision rtal -glibc](https://lore.kernel.org/all/?q=%22tools/rtla:%20fix%20collision%20with%20glibc%22)
+检索到上游有相关的 patches 修复了对应的问题：[collision rtla -glibc](https://lore.kernel.org/all/?q=%22tools/rtla:%20fix%20collision%20with%20glibc%22)
 尝试使用b4下载原始mbx文件:
 `b4 am "20241204155003.2213733-4-sashal@kernel.org"`
 由于该系列补丁包含15个patches, 我们需要的是第四个patch， 使用 `git mailsplit`提取邮件。
@@ -619,16 +623,19 @@ git mailinfo \
 git apply --check --verbose /tmp/rtla-sched-attr.patch
 ```
 
-在这里是不可以的。  
+在这里是不可以的。
 
-2. 手动修改源码，并且构建patch:  
+方法二，手动修改源码，并且构建 patch：
 
-为了构建patch,需要保存修改前的文件，将当前需要修改的源码放到任意目录下：  
-```sh
+为了构建 patch，需要保存修改前的文件，将当前需要修改的源码放到任意目录下：
+
+```text
 /tmp/utils.c.orig
 /tmp/utils.h.orig
 ```
-随后生成patch:  
+
+随后生成 patch：
+
 ```sh
 {
     diff -u \
@@ -643,20 +650,22 @@ git apply --check --verbose /tmp/rtla-sched-attr.patch
         /tmp/utils.h.orig \
         tools/tracing/rtla/src/utils.h || true
 } > ~/workspace/rpmbuild/SOURCES/rtla-sched-attr-compat.patch
-
-之后需要检查patch是否可以apply:  
 ```
+
+之后需要检查 patch 是否可以 apply：
 
 ```sh
 git apply --check --verbose "$patch_file"
 ```
-随后单独编译验证：  
+
+随后单独编译验证：
+
 ```sh
 make -C tools/tracing/rtla clean
 make -C tools/tracing/rtla V=1
 ```
 
-随后，将patch放入SOURCE/，并修改SPEC/kernel.spec, 在其中patch definition部分加入一个未使用的编号，并且在对应applypatch部分加入要添加的patch， 如：  
+随后，将 patch 放入 `SOURCES/`，并修改 `SPECS/kernel.spec`，在其中 patch definition 部分加入一个未使用的编号，并且在对应 applypatch 部分加入要添加的 patch，如：
 ```
 Patch9000: rtla-sched-attr-compat.patch
 
@@ -862,7 +871,7 @@ make: *** [Makefile:617: /mnt/home/huangzs/workspace/rpmbuild/BUILD/kernel-5.14.
 ```
 [PATCH] sched_attr: Do not define for glibc >= 2.41
 ```
-这是有关`tlar-struct attr`重定义错误可能的原因，但是container中glibc版本似乎<2.41???
+这是有关`rtla struct sched_attr`重定义错误可能的原因，但是container中glibc版本似乎<2.41???
 
 排查思路：  
 
@@ -907,7 +916,7 @@ grep -E '^#define __GLIBC(_MINOR__)? '
 
 #define __GLIBC_MINOR__ 34
 
-# 检查/usr/include/bits/shced.h 实际内容是否包含相关宏定义,或是引用了linux的types.h
+# 检查/usr/include/bits/sched.h 实际内容是否包含相关宏定义,或是引用了linux的types.h
 
 bash-5.1# grep -nE \
     'SCHED_NORMAL|SCHED_FLAG_KEEP_ALL|SCHED_FLAG_UTIL_CLAMP|SCHED_ATTR_SIZE_VER0|linux/sched/types.h' \
@@ -1069,7 +1078,7 @@ tools/testing/selftests/usr/include/
 7. 发行版 RPM 打包规则决定哪些版本被安装到 /usr/include。
 ```
 
-#### 问题1， RRLA 的 `struct sched_attr`重定义
+#### 问题1， RTLA 的 `struct sched_attr`重定义
 
 报错信息：  
 
@@ -1275,7 +1284,7 @@ tools/include/uapi/linux/sched.h
 实际情况是 d_path.c 的两个包含分支分别引入 glibc <sched.h> 和源码树 <linux/sched.h>，最终在同一个编译单元汇合。
 ```
 
-当然，为了验证是rhel合入glibc2.4之后的更新而导致的问题，最严谨的方法应该是检索其commit记录，找到提交点。  
+当然，为了验证是rhel合入glibc 2.34之后的更新而导致的问题，最严谨的方法应该是检索其commit记录，找到提交点。  
 
 ## make rpm-pkg
 清理objtool的宿主工具产物：  
@@ -1355,23 +1364,24 @@ title="Red Hat Enterprise Linux (0-rescue-69dd623190cb45aabfed1570bd80b5eb) 9.7 
 id="69dd623190cb45aabfed1570bd80b5eb-0-rescue"
 ```
 
-## refs
+## References
 
-read this :
-https://iximiuz.com/en/posts/docker-publish-container-ports/
-https://github.com/bitristan/docker-linux-2.6.26-build
+- [Docker: Publish container ports](https://iximiuz.com/en/posts/docker-publish-container-ports/)
+- [docker-linux-2.6.26-build](https://github.com/bitristan/docker-linux-2.6.26-build)
 
-**PS:**
-先来读一段dockerdocs有关port publish的文档：  
-By default, for both IPv4 and IPv6, the Docker daemon blocks access to ports that have not been published. Published container ports are mapped to host IP addresses. To do this, it uses firewall rules to perform Network Address Translation (NAT), Port Address Translation (PAT), and masquerading.
-For example, docker run -p 8080:80 [...] creates a mapping between port 8080 on any address on the Docker host, and the container's port 80. Outgoing connections from the container will masquerade, using the Docker host's IP address.
-When you create or run a container using docker create or docker run, all ports of containers on bridge networks are accessible from the Docker host and other containers connected to the same network. Ports are not accessible from outside the host or, with the default configuration, from containers in other networks.
-Use the --publish or -p flag to make a port available outside the host, and to containers in other bridge networks.
+## 补充：port publish 的澄清
 
-```text
- all ports of containers on bridge networks are accessible from the Docker host and other containers connected to the same network. Ports are not accessible from outside the host or, with the default configuration, from containers in other networks.
-```
-之前一直以为host无法访问container的网络端口，事实上通过显式指定container ip:port是可以访问的。
-而port publish 实际上解决的问题是“访问container outside the host”，后续实验通过1234:1234， 将host:1234和container:1234做映射。
-而后在本地wsl(outside the host)成功访问了container的qemu服务。
+先来读一段 docker docs 有关 port publish 的文档：
+
+> By default, for both IPv4 and IPv6, the Docker daemon blocks access to ports that have not been published. Published container ports are mapped to host IP addresses. To do this, it uses firewall rules to perform Network Address Translation (NAT), Port Address Translation (PAT), and masquerading.
+>
+> For example, docker run -p 8080:80 [...] creates a mapping between port 8080 on any address on the Docker host, and the container's port 80. Outgoing connections from the container will masquerade, using the Docker host's IP address.
+>
+> When you create or run a container using docker create or docker run, all ports of containers on bridge networks are accessible from the Docker host and other containers connected to the same network. Ports are not accessible from outside the host or, with the default configuration, from containers in other networks.
+>
+> Use the --publish or -p flag to make a port available outside the host, and to containers in other bridge networks.
+
+之前一直以为 host 无法访问 container 的网络端口，事实上通过显式指定 container ip:port 是可以访问的。
+而 port publish 实际上解决的问题是"访问 container outside the host"，后续实验通过 1234:1234，将 host:1234 和 container:1234 做映射。
+而后在本地 wsl（outside the host）成功访问了 container 的 qemu 服务。
 这点需要澄清。

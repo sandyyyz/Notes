@@ -1,35 +1,35 @@
 # Heterogeneous Memory Management
 
 HMM is a set of helpers to facilitate several aspects of address space
-sharing and device memory management.  
-Unlike existing sharing mechanism
-that rely on pining pages use by a device, HMM relies on mmu_notifier to
-propagate CPU page table update to device page table.  
+sharing and device memory management.
+Unlike existing sharing mechanisms that rely on pinning pages used by a
+device, HMM relies on mmu_notifier to propagate CPU page table updates to
+the device page table.
 
-Design purpose:  
-1. Avoiding pinning pages device need to access in host-memory.
-2. Allow to migrate range of memory to the device to take advantage of its lower latency and higer bandwidth.
-3. Share virtual address space between device and cpu (by copy cpu-pgtble to device's mmu or sign a device memory page in host mem-table, so the device need is supposed to have its own mmu witha page table per process it wants to mirror)
-4. provide a common API that can be used by any such devices in order to mirror process address.
+Design purpose:
+
+1. Avoid pinning pages a device needs to access in host memory.
+2. Allow migrating ranges of memory to the device to take advantage of its lower latency and higher bandwidth.
+3. Share the virtual address space between device and CPU (by copying the CPU page table to the device's MMU, or assigning a device memory page in the host mem-table; the device is thus supposed to have its own MMU with a page table per process it wants to mirror).
+4. Provide a common API that can be used by any such device in order to mirror a process address space.
 
 ## patches
 
 ### v1
 
-1. differentiate unmap for vmscan for other unmap.
-2. Add action information to address invalidation(mmu_action, maybe removed in the future? it said: *The action information will be usefull for new user of mmu_notifier API.*)
-3. mmu_notifier: pass through vma to invalidate_range and invalidate_page. redoing a vma lookup inside the callback -> pass through the vma hwere it is already available.
+1. Differentiate unmap for vmscan from other unmap.
+2. Add action information to address invalidation (mmu_action, maybe removed in the future? it said: *The action information will be useful for new users of mmu_notifier API.*)
+3. mmu_notifier: pass through vma to invalidate_range and invalidate_page. Redoing a vma lookup inside the callback -> pass through the vma where it is already available.
 4. interval_tree: helper to find previous item of a node in rb interval tree.
-5. mm/memcg: support accounting null page and
- transfering null charge to new page(null page -- page tansferred from memory to device memory.)
+5. mm/memcg: support accounting null page and transferring null charge to new page (null page -- page transferred from memory to device memory).
 6. hmm: heterogeneous memory management.
 7. hmm: support moving anonymous page to remote memory.
-8. hmm: support for migrate file backed pages to remote memory.
+8. hmm: support for migrating file backed pages to remote memory.
 9. fs/ext4: add support for hmm migration to remote
- memory of pagecache.
+   memory of pagecache.
 10. hmm/dummy: dummy driver to showcase the hmm api.
 11. hmm/dummy_driver: add support for fake remote memory
- using pages.
+    using pages.
 
 ### v25
 
@@ -38,7 +38,7 @@ APIS:
 
 #### int hmm_mirror_register(struct hmm_mirror *mirror, struct mm_struct *mm);
 
-A device driver that want to mirror a process address space must start with registaration of an hmm_mirror struct.
+A device driver that wants to mirror a process address space must start with registration of an hmm_mirror struct.
 
 ```c
 /*
@@ -123,8 +123,8 @@ struct hmm {
 
 #### hmm_mirror_ops
 
-a set of callback that are used to propagate cpu page table.  
-当host端更新页表时(turan page read only, fully unmap...)，device driver必须调用对应的callback更新设备端页表，并且保证完成后再返回。  
+a set of callbacks that are used to propagate CPU page table updates.
+当 host 端更新页表时（turn page read-only、fully unmap 等），device driver 必须调用对应的 callback 更新设备端页表，并且保证完成后再返回。
 
 ```c
 
@@ -215,8 +215,8 @@ struct hmm_range {
 	bool			valid;
 };
 ```
-注释的表述有点令人感到误解，他的意思是跟踪指定虚拟地址范围上的页表失效事件。  
-pfns数组追踪[start, end)内所有pfns?
+注释的表述有点令人误解，它的意思是跟踪指定虚拟地址范围上的页表失效事件。
+Q: pfns 数组追踪 [start, end) 内所有 pfns？
 
 
 #### int hmm_vma_get_pfns(struct vm_area_struct *vma, struct hmm_range *range, unsigned long start, unsigned long end, hmm_pfn_t *pfns);
@@ -299,8 +299,8 @@ int hmm_vma_get_pfns(struct vm_area_struct *vma,
 }
 EXPORT_SYMBOL(hmm_vma_get_pfns);
 
-那么`pfns`是在哪里被更新的呢？  
-这里还有一个非常重要的结构体 `mm_walk`
+那么 `pfns` 是在哪里被更新的呢？
+这里还有一个非常重要的结构体 `mm_walk`。
 
 #### struct mm_walk
 
@@ -348,7 +348,7 @@ struct mm_walk {
 	void *private;
 };
 ```
-这里的`private`字段在`hmm_vma_get_pfns`中将被赋值`&hmm_vma_walk`.  
+这里的 `private` 字段在 `hmm_vma_get_pfns` 中将被赋值 `&hmm_vma_walk`。
 
 ```c
 struct hmm_vma_walk {
@@ -360,13 +360,15 @@ struct hmm_vma_walk {
 };
 ```
 
-`hmm_range`用于追踪指定虚拟地址范围内的页表失效事件。其中包含我们关注的 `pfns`.  
-由于`hmm_vma_get_pfns`中的  
+`hmm_range` 用于追踪指定虚拟地址范围内的页表失效事件，其中包含我们关注的 `pfns`。
+由于 `hmm_vma_get_pfns` 中的
 
-``` mm_walk.pmd_entry = hmm_vma_walk_pmd;```
+```c
+mm_walk.pmd_entry = hmm_vma_walk_pmd;
+```
 
-这行单独设置了`pmd`的callback fuction,`walk_page_range(start, end, walk)`遍历页表时，会将对应的`pfns`状态更新  
-在walk pagetable的过程中，会通过`*private`找到`hmm_vma_walk`，从而找到`range->pfns`, 并且更新`pfns`的有效状态。  
+这行单独设置了 `pmd` 的 callback function，`walk_page_range(start, end, walk)` 遍历页表时，会将对应的 `pfns` 状态更新。
+在 walk page table 的过程中，会通过 `*private` 找到 `hmm_vma_walk`，从而找到 `range->pfns`，并更新 `pfns` 的有效状态。
 
 #### hmm_devmem_ops
 
@@ -443,9 +445,9 @@ struct hmm_devmem_ops {
 
 ```
 
-按照描述，这两个函数是device memory相关的callback.此时pgtble指向的内存并不在CPU这端，需要free 一块 device memory, 或者是CPU访问到这块内存时，产生一个pagefault，将对应设备内存迁移回CPU端。
+按照描述，这两个函数是 device memory 相关的 callback。此时页表指向的内存并不在 CPU 这端：需要 free 一块 device memory，或者是 CPU 访问到这块内存时产生一个 page fault，将对应设备内存迁移回 CPU 端。
 
-#### struct hmm_demem
+#### struct hmm_devmem
 
 struct to track device memory.  
 
@@ -601,7 +603,7 @@ void hmm_devmem_remove(struct hmm_devmem *devmem);
 
 ```
 
-#### migrate to and from device memory.
+#### migrate to and from device memory
 
 ```c
 /*
@@ -743,8 +745,10 @@ struct migrate_vma_ops {
 
 ```
 
-## v4.14-hmm.c
+## TODO
 
-## refs
+- 阅读 v4.14 hmm.c 源码
 
-[lwn_hmm_v25](https://lwn.net/Articles/731259/)
+## References
+
+- [LWN: HMM v25](https://lwn.net/Articles/731259/)

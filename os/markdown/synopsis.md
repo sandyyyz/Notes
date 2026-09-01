@@ -17,12 +17,11 @@ SYNOPSIS
 
 ## 字面量
 
-命令名、选项以及固定关键字需要原样输入。如`strace -p pid`中的`stace`
+命令名、选项以及固定关键字需要原样输入。如 `strace -p pid` 中的 `strace`
 
-## 参数占位符<>
-`<pid>`  
+## 参数占位符 <>
 
-pid、file、command等名词表示需要替换为实际词的参数。如`strace -p pid`中的`pid`
+`pid`、`file`、`command` 等名词表示需要替换为实际值的参数。如 `strace -p pid` 中的 `pid`
 
 ## 可选项[...]
 
@@ -110,13 +109,14 @@ strace -- command -x
 
 ## 在man中搜索
 
-注意如果直接搜索关键字，很有可能会有非常多无关匹配项，需要结合正则表达式搜索。  
-一个搜索行首缩进+选项名+空格或是逗号的例子如下：
-```regx
+注意如果直接搜索关键字，很可能会有非常多无关匹配项，需要结合正则表达式搜索。
+一个搜索"行首缩进 + 选项名 + 空格或逗号"的例子如下：
+
+```regex
 /^ *-e[ ,]
 ```
 
-后续可以单独做一个笔记概述正则表达式常用语法。
+TODO: 后续单独做一个笔记概述正则表达式常用语法。
 
 ## command/args
 
@@ -135,35 +135,35 @@ command [args]
 strace ls -l /tmp
 ```
 
-## markdown代码块常用支持渲染类型
+## markdown 代码块常用支持渲染类型
 
-| 标识符          | 内容类型            |
-| ------------ | --------------- |
-| `text`       | 纯文本，不进行语法高亮     |
-| `c`          | C               |
-| `cpp`        | C++             |
-| `rust`       | Rust            |
-| `go`         | Go              |
-| `java`       | Java            |
-| `python`     | Python          |
-| `javascript` | JavaScript      |
-| `typescript` | TypeScript      |
-| `bash`       | Bash 或 Shell 命令 |
-| `sh`         | POSIX Shell     |
-| `powershell` | PowerShell      |
-| `sql`        | SQL             |
-| `html`       | HTML            |
-| `css`        | CSS             |
-| `json`       | JSON            |
-| `yaml`       | YAML            |
-| `xml`        | XML             |
-| `markdown`   | Markdown 源码     |
-| `diff`       | 补丁或文本差异         |
-| `makefile`   | Makefile        |
-| `cmake`      | CMake           |
-| `assembly`   | 汇编语言            |
-| `ini`        | INI 配置文件        |
-| `toml`       | TOML 配置文件       |
-| `dockerfile` | Dockerfile      |
-| `regex`      | 正则表达式，依赖渲染器支持   |
+| 标识符        | 内容类型          |
+| ------------- | ----------------- |
+| `text`        | 纯文本，不进行语法高亮 |
+| `c`           | C                 |
+| `cpp`         | C++               |
+| `rust`        | Rust              |
+| `go`          | Go                |
+| `java`        | Java              |
+| `python`      | Python            |
+| `javascript`  | JavaScript        |
+| `typescript`  | TypeScript        |
+| `bash`        | Bash 或 Shell 命令 |
+| `sh`          | POSIX Shell       |
+| `powershell`  | PowerShell        |
+| `sql`         | SQL               |
+| `html`        | HTML              |
+| `css`         | CSS               |
+| `json`        | JSON              |
+| `yaml`        | YAML              |
+| `xml`         | XML               |
+| `markdown`    | Markdown 源码     |
+| `diff`        | 补丁或文本差异     |
+| `makefile`    | Makefile          |
+| `cmake`       | CMake             |
+| `assembly`    | 汇编语言          |
+| `ini`         | INI 配置文件      |
+| `toml`        | TOML 配置文件     |
+| `dockerfile`  | Dockerfile        |
+| `regex`       | 正则表达式，依赖渲染器支持 |
 

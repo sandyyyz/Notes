@@ -1,13 +1,13 @@
-# keyword
+# 待深入的主题
 
-1. CXL
-2. famfs
-3. HMM
-4. DAX
-5. memcg
-6. tiered-memory
-7. folio
-8. THP
-9. struct page -> memory descriptor
-10. MMIO
-11. IOMMU
+- CXL — 见 [cxl.md](./cxl.md)
+- famfs
+- HMM — 见 [hmm.md](./hmm.md)
+- DAX
+- memcg
+- tiered-memory
+- folio
+- THP
+- struct page → memory descriptor — 见 [mm.md](./mm.md)
+- MMIO
+- IOMMU

@@ -41,11 +41,13 @@ Shim不是GRUB的必备前级，也不是Secure Boot本身，而是Linux发行�
 
 ## bootloader
 
-bootloader的职责是找到kernel与initrd,并且将他们装入内核。在bootloader被载入内存执行后，首先需要初始化自己的执行环境，包括一个脚本解释器，之后会在固定的目录下寻找自己的配置文件，如/boot/grub/grub.cfg..  
-GRUB在自身启动并完成基本初始化后，通过prefix定位并执行$prefix/grub.cfg；  
-它从中获得启动菜单、Kernel和initramfs的位置、Kernel Command Line及相关加载策略。  
-读取某个名为grub.cfg的外部文件并非协议上的硬性要求，但GRUB必须以某种方式获得等价的启动命令；外部grub.cfg只是通用系统中最灵活、最常用的实现方式。  
-随后，由bootloader的脚本解释器解析执行该配置文件。该配置文件实际上记录了kernel、initrd的路径，以及向kernel传递的参数等重要信息。当bootloader成功将kernel与initrd载入内存后，将执行流切换至内核。
+bootloader 的职责是找到 kernel 与 initrd，并将它们装入内存。在 bootloader 被载入内存执行后，首先需要初始化自己的执行环境，包括一个脚本解释器，之后会在固定的目录下寻找自己的配置文件，如 `/boot/grub/grub.cfg`。
+
+GRUB 在自身启动并完成基本初始化后，通过 `prefix` 定位并执行 `$prefix/grub.cfg`，从中获得启动菜单、Kernel 和 initramfs 的位置、Kernel Command Line 及相关加载策略。
+
+读取某个名为 grub.cfg 的外部文件并非协议上的硬性要求，但 GRUB 必须以某种方式获得等价的启动命令；外部 grub.cfg 只是通用系统中最灵活、最常用的实现方式。
+
+随后，由 bootloader 的脚本解释器解析执行该配置文件。该配置文件实际上记录了 kernel、initrd 的路径，以及向 kernel 传递的参数等重要信息。当 bootloader 成功将 kernel 与 initrd 载入内存后，将执行流切换至内核。
 
 ## kernel
 
@@ -87,16 +89,24 @@ initramfs本质上是一个能够独立运行的、位于内存中的最小用�
 ├── etc/
 └── usr/
 ```
-其中最关键的是根目录下的/init。它是initramfs阶段的入口程序，内核完成自身初始化后会尝试执行它。  
-/init可以是Shell脚本、BusyBox程序，也可以是systemd或dracut提供的初始化程序；它负责组织整个早期用户空间的启动流程。  
-bin、sbin和usr中通常包含mount、modprobe、udevadm、blkid、fsck、switch_root等必要工具，很多精简系统使用BusyBox统一提供这些命令；  
-lib/modules/<kernel-version>保存访问根设备所需的内核模块，例如NVMe、SCSI、VirtIO、USB存储、RAID、Device Mapper及文件系统模块；  
-lib和lib64保存动态链接库以及可能需要的固件；  
-etc中则可能包含模块加载配置、udev规则以及用于识别根设备、LVM、RAID和加密卷的配置。  
-initramfs也可能包含cryptsetup、LVM、mdadm、multipath、iSCSI和网络配置工具，具体内容取决于真实RootFS的存储组织方式.  
-随后，内核结束内核态的初始化，并创建第一个用户进程。  
-/init 读取内核命令行，尤其是boot loader通过Linux commandline 传入的参数，根据这些参数确定真正rootfs的位置和访问方式，同时启动udev或等价的设备管理机制，触发设备枚举，并使用modprobe加载对应的内核模块。驱动加载后，内核才能识别磁盘控制器及磁盘设备，并在/dev下产生相应设备节点。  
-当目标设备准备完成时，initramfs将真实的rootfs挂载，此时系统中存在两个根文件系统。随后initramfs需要切换根文件系统，并且完成对旧根文件系统的清理。并在同一个PID 1进程上下文中通过execve()执行真实RootFS里的/sbin/init  
+其中最关键的是根目录下的 `/init`。它是 initramfs 阶段的入口程序，内核完成自身初始化后会尝试执行它。
+
+`/init` 可以是 Shell 脚本、BusyBox 程序，也可以是 systemd 或 dracut 提供的初始化程序；它负责组织整个早期用户空间的启动流程：
+
+- `bin/`、`sbin/` 和 `usr/` 中通常包含 mount、modprobe、udevadm、blkid、fsck、switch_root 等必要工具，很多精简系统使用 BusyBox 统一提供这些命令；
+- `lib/modules/<kernel-version>/` 保存访问根设备所需的内核模块，例如 NVMe、SCSI、VirtIO、USB 存储、RAID、Device Mapper 及文件系统模块；
+- `lib/` 和 `lib64/` 保存动态链接库以及可能需要的固件；
+- `etc/` 中则可能包含模块加载配置、udev 规则以及用于识别根设备、LVM、RAID 和加密卷的配置。
+
+initramfs 也可能包含 cryptsetup、LVM、mdadm、multipath、iSCSI 和网络配置工具，具体内容取决于真实 RootFS 的存储组织方式。
+
+随后，内核结束内核态的初始化，并创建第一个用户进程。`/init` 的工作流程大致如下：
+
+1. 读取内核命令行，尤其是 bootloader 通过 Linux command line 传入的参数，根据这些参数确定真正 rootfs 的位置和访问方式；
+2. 启动 udev 或等价的设备管理机制，触发设备枚举，并使用 modprobe 加载对应的内核模块；
+3. 驱动加载后，内核才能识别磁盘控制器及磁盘设备，并在 `/dev` 下产生相应设备节点；
+4. 当目标设备准备完成时，将真实的 rootfs 挂载，此时系统中存在两个根文件系统；
+5. 切换根文件系统，完成对旧根文件系统的清理，并在同一个 PID 1 进程上下文中通过 `execve()` 执行真实 RootFS 里的 `/sbin/init`。
 整体流程概括如下：  
 
 ```
@@ -161,7 +171,8 @@ UEFI
 
 ```
 
-Todo:
+## TODO
+
 1. edk2 source code
 2. grub source code
-3. linux source code (init-initramfs related)
+3. linux source code (init/initramfs related)

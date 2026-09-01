@@ -14,12 +14,12 @@ Arch: `AMD64`
 
 1. 16 通用 64-bit 寄存器
 2. AMD64: 16 128-bit-SSE寄存器
-3. Intel AVX (Advanced Vector Extensions), 16 256-bit wide AVX registers (%ymm0- %ymm15).The lower 128-bits of %ymm0- %ymm15 are aliased to the respective 128b-bit
+3. Intel AVX (Advanced Vector Extensions), 16 256-bit wide AVX registers (%ymm0- %ymm15). The lower 128-bits of %ymm0- %ymm15 are aliased to the respective 128-bit
 SSE registers (%xmm0- %xmm15).
-4.  Intel AVX-512 provides 32 512-bit wide SIMD registers
-(%zmm0- %zmm31). The lower 128-bits of %zmm0- %zmm31 are aliased to the respective 128b
-bit SSE registers (%xmm0- %xmm317). The lower 256-bits of %zmm0- %zmm31 are aliased to the
-respective 256-bit AVX registers (%ymm0- %ymm318). For purposes of parameter passing and
+4. Intel AVX-512 provides 32 512-bit wide SIMD registers
+(%zmm0- %zmm31). The lower 128-bits of %zmm0- %zmm31 are aliased to the respective 128-bit
+SSE registers (%xmm0- %xmm15). The lower 256-bits of %zmm0- %zmm31 are aliased to the
+respective 256-bit AVX registers (%ymm0- %ymm15). For purposes of parameter passing and
 function return, %xmmN, %ymmN and %zmmN refer to the same register. Only one of them can
 be used at the same time.
 5. Intel AVX-512 also provides 8 vector mask registers (%k0- %k7), each
@@ -29,9 +29,10 @@ be used at the same time.
 8. Intel APX (Advanced Performance Extensions) provides 16 general purpose 64-bit
 registers (%r16- %r31).
 
-`caller(callee-saved)`寄存器: `%rsp, %rbp, %rbx, %r12-%r15`  
-`callee(caller-saved)`寄存器: others  
-这里的`caller/ee`指的是寄存器*属于谁*， 即在函数调用过程中，当前过程需要*保护*寄存器从属者的值。而`callee/er-saved`指的是在函数调用的过程中，*寄存器的值由谁保存*。举个例子：  
+属于 caller 的（callee-saved）寄存器：`%rbp, %rbx, %r12-%r15`
+属于 callee 的（caller-saved）寄存器：others
+
+这里的属于关系指的是寄存器*属于谁*，即在函数调用过程中，当前过程需要*保护*寄存器从属者的值。而 `callee-saved`/`caller-saved` 指的是在函数调用的过程中，*寄存器的值由谁保存*。举个例子：
 `%rbp, %rbx, %r12-%r15` 寄存器*属于*`caller`，`callee`如果需要使用这些寄存器，需要在使用前保存，并在返回时恢复寄存器的值。而其他的`callee`寄存器，如果`caller`需要保证寄存器内的值不改变，需要在调用函数前主动保存于自身的栈帧内，函数返回时手动恢复。
 
 ### Stack Frame
@@ -41,13 +42,13 @@ registers (%r16- %r31).
 
 在 `System V AMD64 ABI` 中，当前 `%rsp` 以下的 128 字节被定义为 `red zone`。信号和中断处理程序不得破坏这一区域，因此普通用户态函数可以在不移动 `%rsp` 的情况下，将其作为临时存储空间。由于函数调用可能覆盖该区域，它主要用于不调用其他函数的叶子函数，以省略建立和销毁栈帧的指令。
 
-### Parameter Pasisng
+### Parameter Passing
 
 由于是64位架构，自然的，The size of each argument gets rounded up to eightbytes.  
 
 由于参数的位长不同，且架构有不同类型的寄存器，ABI因此规定了一系列类型，用于决定其应该如何传递：  
 
-`INTERGER`: 存入一个通用寄存器。  
+`INTEGER`: 存入一个通用寄存器。  
 `SSE`: 存入一个向量寄存器。  
 `SSEUP`: 可以存入一个向量寄存器，且 `can be passed and returned in the upper bytes of it.`  
 `X87, X87UP, COMPLEX_X87 `: returned via `x87 FPU`.  
@@ -57,13 +58,13 @@ and empty structures and unions.(?)
 
 #### Classification
 
-对于基本数据类型，如 (signed and unsigned) _Bool, char, short, int, long, long long, and pointers ), `INTERGER`  
+对于基本数据类型，如 (signed and unsigned) _Bool, char, short, int, long, long long, and pointers ), `INTEGER`  
 浮点类型等，( _Float16, float, double, _Decimal32, _Decimal64 and __m64), `SSE`  
 长浮点类型等，(__float128, _Decimal128 and __m128 )，分为两个部分， 高位部分`SSEUP`, 低位部分`SSE`  
 __m256, The least significant one belongs to class SSE and all the others to class SSEUP  
 注意__mxx类型是编译器为x86 SIMD指令集提供的内建向量类型， 用来抽象 MMX、SSE、AVX 和 AVX-512 寄存器中的数据。它们不是标准 C/C++ 基本类型，而是 GCC、Clang、Intel 编译器和 MSVC 等提供的扩展类型，通常配合 intrinsic 函数使用。  
 long double: `X87`
-__int128, 高位低位分别视为一个`INTERGER`,即：  
+__int128, 高位低位分别视为一个`INTEGER`,即：  
 ```c
 typedef struct {
 long low, high;
@@ -71,11 +72,11 @@ long low, high;
 ```
 此类参数需要通过内存传递时，必须按照16字节对齐。  
 
-Arguments of type _BitInt(N) with N <= 64 are in the INTEGER class.  
-• Arguments of type _BitInt(N) with N > 64 are classified as if they were imple
-mented as struct of 64-bit integer fields.  
+Arguments of type _BitInt(N) with N <= 64 are in the INTEGER class.
+• Arguments of type _BitInt(N) with N > 64 are classified as if they were
+implemented as struct of 64-bit integer fields.
 • Arguments of complex T where T is one of the types _Float16, float, double or
-__float128 are treated as if they are implemented as:  
+__float128 are treated as if they are implemented as:
 
 ```c
 struct complexT {
@@ -88,7 +89,7 @@ complex long double is classified as type COMPLEX_X87
 
 对于array, union, arrays:  
 1. 如果对象大小大于8个eightbyte, 即64个字节， 或者包含未对齐的字段，为`MEMORY`类型。  
-2. 如果一个 C++ 对象按照 C++ ABI 的规定，在函数调用意义上属于 non-trivial，那么该对象通过“不可见引用”传递.即此时传递一个`INTERGER`类型的pointer。这里的`non-trival`的意思是，某个对象操作不能被视为无需特殊语义的普通操作，而必须执行用户提供的函数，或递归执行成员、基类所要求的非平凡构造、复制、移动或析构逻辑。该对象不适合被简单拆分成寄存器值进行参数传递。编译器需先构造一个具有完整生命周期的形参对象，再通过隐藏指针将其地址传给被调用函数。
+2. 如果一个 C++ 对象按照 C++ ABI 的规定，在函数调用意义上属于 non-trivial，那么该对象通过“不可见引用”传递.即此时传递一个`INTEGER`类型的pointer。这里的`non-trivial`的意思是，某个对象操作不能被视为无需特殊语义的普通操作，而必须执行用户提供的函数，或递归执行成员、基类所要求的非平凡构造、复制、移动或析构逻辑。该对象不适合被简单拆分成寄存器值进行参数传递。编译器需先构造一个具有完整生命周期的形参对象，再通过隐藏指针将其地址传给被调用函数。
 3. 当总大小超过八字节时， 以八字节为单位，对每个部分进行单独分类。每个部分被初始化为`NO_CLASS`  
 单独分类后，对每个部分单独进行递归的分类，分类规则如下：  
 
@@ -105,9 +106,8 @@ used as class.
 ```text
 (a) If one of the classes is MEMORY, the whole argument is passed in memory.
 (b) If X87UP is not preceded by X87, the whole argument is passed in memory.
-(c) If the size of the aggregate exceeds two eightbytes and the first eightbyte isn’t
-SSE or any other eightbyte isn’t SSEUP, the whole argument is passed in mem
-ory.
+(c) If the size of the aggregate exceeds two eightbytes and the first eightbyte isn't
+SSE or any other eightbyte isn't SSEUP, the whole argument is passed in memory.
 (d) If SSEUP is not preceded by SSE or SSEUP, it is converted to SSE
 ```
 该步骤将决定此对象整体应该是何种类型。  
@@ -208,9 +208,9 @@ NO_CLASS
 ```text
 
 1. If the class is MEMORY, pass the argument on the stack at an address respecting the
-arguments alignment (which might be more than its natural alignement).
+arguments alignment (which might be more than its natural alignment).
 2. If the class is INTEGER, the next available register of the sequence %rdi, %rsi, %rdx,
-%rcx, %r8 and %r9 is used19.
+%rcx, %r8 and %r9 is used.
 3. If the class is SSE, the next available vector register is used, the registers are taken
 in the order from %xmm0 to %xmm7.
 4. If the class is SSEUP, the eightbyte is passed in the next available eightbyte chunk
@@ -231,8 +231,8 @@ of the last used vector register.
 首先，通过前面的分类算法判断返回值的类型。  
 
 `MEMORY`: caller负责为返回值保留空间，并且通过`%rdi`将相应地址传递给callee, 此时`%rdi`相当于一个隐藏的第一个参数。返回时`%rax`将保存caller通过`%rdi`传递的地址。  
-`INTERGER`: 放入以`%rax`为首的整数寄存器。  
-`SSE`: next avaliable vector register(`%xmm0, %xmm1`)...  
+`INTEGER`: 放入以`%rax`为首的整数寄存器。  
+`SSE`: next available vector register(`%xmm0, %xmm1`)...  
 `SSEUP`:  the eightbyte is returned in the next available eightbyte chunk of the last used vector register.  
 `X87`:  returned on the X87 stack in %st0 as 80-bit x87 number.  
 `X87UP`:  returned together with the previous X87 value in `%st0`  
@@ -278,11 +278,9 @@ of the last used vector register.
 
 ## debug
 
-code:  
+参考实现：[AMD64_ABI](https://gitlab.com/x86-psABIs/x86-64-ABI)
 
 ```c
-
-[AMD64_ABI](https://gitlab.com/x86-psABIs/x86-64-ABI)
 #include <immintrin.h>
 #include <stdio.h>
 
@@ -395,14 +393,12 @@ int main(void)
 2. jmp dest
 ```
 
-注意到汇编代码中有一部分使用相对于`rip`的地址读取浮点数， 是.rodata段.  
+注意到汇编代码中有一部分使用相对于 `rip` 的地址读取浮点数，这是 `.rodata` 段。
 
-rodata section of abi_args:  
+`abi_args` 的 .rodata 段：
 
 ```sh
-
 zoe@HUANGZS7-2V8W0R:~/workspace/amd64abitest/code$ objdump -s -j .rodata ./abi_args
-``
 
 ./abi_args:     file format elf64-x86-64
 
@@ -1171,6 +1167,6 @@ func(
 | 使用 stack canary                 | 否          |
 | 使用 `r10` 保存原始 `%rsp`            | 否          |
 
-# refs
+## References
 
-
+- [System V ABI: AMD64](https://gitlab.com/x86-psABIs/x86-64-ABI)
