@@ -789,3 +789,676 @@ Clang 21 新诊断
 调试阶段局部编译并保留 BUILD。
 稳定后通过 patch 和 Spec实现可重复构建。
 准确重建 RHEL 内核时，优先使用与目标 SRPM 小版本匹配的仓库、头文件和工具链环境。
+
+
+HMM、test_hmm 与 ftrace 调试总结
+1. HMM 的两条核心路径
+
+本次分析涉及 HMM 中两类相互独立但互补的机制。
+
+地址空间镜像
+
+用于设备访问仍驻留在系统内存中的用户页面：
+
+用户虚拟地址
+    ↓
+hmm_range_fault()
+    ↓
+遍历 CPU 页表
+    ↓
+生成 PFN、权限和页面状态
+    ↓
+驱动更新设备页表 dmirror->pt
+    ↓
+设备通过设备页表访问系统页面
+
+
+典型测试：
+
+anon_read
+anon_write
+file_read
+file_write
+
+
+hmm_range_fault() 只负责读取 CPU 页表并生成结果，不会自动修改设备页表。test_hmm 在 dmirror_fault() 中消费查询结果，并通过 xa_store() 更新 dmirror->pt。
+
+页面迁移
+
+用于在系统 RAM 与设备内存之间迁移页面：
+
+migrate_vma_setup()
+    ↓
+驱动分配目标页并复制数据
+    ↓
+migrate_vma_pages()
+    ↓
+驱动更新设备页表
+    ↓
+migrate_vma_finalize()
+
+
+典型测试：
+
+migrate
+migrate_fault
+migrate_release
+migrate_multiple
+
+
+migrate_fault 不需要调用 hmm_range_fault()，因为迁入设备时由 migrate_vma_setup() 直接遍历页表并收集源页；CPU 访问 DEVICE_PRIVATE 页时，特殊页表项已经包含设备页 PFN，可直接进入 .migrate_to_ram 回调。
+
+2. test_hmm 测试框架
+self 的来源
+
+FIXTURE(hmm) 定义 fixture 数据类型：
+
+struct _test_data_hmm {
+	int fd;
+	unsigned long page_size;
+	unsigned long page_shift;
+};
+
+
+每个 TEST_F(hmm, test_name) 对应的 wrapper 创建：
+
+struct _test_data_hmm self_private;
+struct _test_data_hmm *self = &self_private;
+
+
+随后依次传给：
+
+hmm_setup(..., self, ...)
+具体测试函数(..., self, ...)
+hmm_teardown(..., self, ...)
+
+
+FIXTURE_SETUP(hmm) 在每个测试开始前执行，主要完成：
+
+self->page_size = sysconf(_SC_PAGE_SIZE);
+self->page_shift = ffs(self->page_size) - 1;
+self->fd = hmm_open(variant->device_number);
+
+测试进程结构
+
+当前 harness 包含两层 fork()：
+
+hmm-tests 主进程
+    ↓ __run_test() fork
+测试管理进程
+    ↓ wrapper fork
+实际测试进程
+    ├─ fixture setup
+    ├─ test body
+    └─ fixture teardown
+
+
+实际访问 /dev/hmm_dmirror*、执行 ioctl 和操作测试地址空间的是最内层测试进程。
+
+Variant
+
+主要 variant 为：
+
+hmm_device_private
+hmm_device_coherent
+hmm2_device_private
+hmm2_device_coherent
+
+
+其中：
+
+hmm 使用一个设备文件描述符；
+hmm2 使用两个设备实例；
+device_private 对应设备私有内存；
+device_coherent 对应 CPU 和设备可一致访问的设备内存。
+3. 字符设备与 ioctl 转发
+
+用户态：
+
+hmm_migrate_sys_to_dev(self->fd, buffer, npages);
+
+
+最终由 hmm_dmirror_cmd() 发出：
+
+ioctl(fd, HMM_DMIRROR_MIGRATE_TO_DEV, &cmd);
+
+
+内核转发路径为：
+
+ioctl()
+    ↓
+系统调用入口
+    ↓
+根据 fd 找到 struct file
+    ↓
+file->f_op->unlocked_ioctl
+    ↓
+test_hmm 驱动 ioctl 回调
+    ↓
+根据 HMM_DMIRROR_* 命令分派
+
+
+其中：
+
+fd
+    决定进入哪个字符设备实例
+
+ioctl command
+    决定执行读取、写入、迁移或快照等操作
+
+cmd
+    携带用户地址、返回缓冲区和页面数量
+
+
+cdev_add() 只注册内核字符设备，不自动创建 /dev 节点。test_hmm.sh 负责通过 mknod 创建：
+
+/dev/hmm_dmirror0
+/dev/hmm_dmirror1
+
+4. 模拟设备读取系统内存
+数据准备
+
+用户态先初始化：
+
+buffer->ptr = mmap(...);
+
+for (...)
+	ptr[i] = i;
+
+
+此时数据已经写入普通系统 RAM，CPU 页表也已建立相应映射。
+
+设备页表建立
+
+首次执行 dmirror_do_read() 时，dmirror->pt 可能为空：
+
+entry = xa_load(&dmirror->pt, virtual_page_number);
+
+
+若找不到条目，返回：
+
+-ENOENT
+
+
+随后 dmirror_read() 调用：
+
+dmirror_fault()
+
+
+后者执行：
+
+hmm_range_fault()
+    ↓
+获得虚拟地址对应的 PFN和权限
+    ↓
+PFN 转换为 struct page
+    ↓
+xa_store(&dmirror->pt, virtual_page_number, page, ...)
+
+
+之后重新执行 dmirror_do_read()。
+
+真正读取数据的位置
+memcpy_from_page(ptr, page, 0, PAGE_SIZE);
+
+
+这里的 page 是 buffer->ptr 对应的系统物理页。此调用模拟真实设备通过 DMA 从系统内存读取数据。
+
+完整数据流：
+
+buffer->ptr 对应的系统页
+    ↓ memcpy_from_page()
+bounce.ptr
+    ↓ copy_to_user()
+buffer->mirror
+
+
+buffer->mirror 只是用户态观察设备读取结果的验证缓冲区，并非设备页表或设备内存。
+
+5. dmirror->pt 的表示
+
+dmirror->pt 是 XArray 实现的模拟设备页表：
+
+键：
+    用户虚拟地址 >> PAGE_SHIFT
+
+值：
+    struct page *，低位可编码写权限
+
+
+变量常命名为 pfn，但在：
+
+pfn = start >> PAGE_SHIFT;
+xa_load(&dmirror->pt, pfn);
+
+
+中实际表示虚拟页号，而非物理 PFN。
+
+对于普通系统页：
+
+虚拟页号 → 系统 struct page *
+
+
+对于迁入 DEVICE_PRIVATE 的页面：
+
+虚拟页号 → BACKING_PAGE(dpage)
+
+
+MMU notifier 在 CPU 页表变化时删除无效的设备页表项。下次设备访问发现条目缺失，再通过 hmm_range_fault() 重建。
+
+6. migrate_vma_setup() 的作用
+
+migrate_vma_setup() 负责迁移准备，而不是完成迁移：
+
+校验 VMA 和地址范围
+    ↓
+清空 src[]
+    ↓
+遍历 CPU 页表并收集源页
+    ↓
+锁定源页
+    ↓
+临时撤销 CPU 映射
+    ↓
+检查页面是否被 pin
+    ↓
+对可迁移页设置 MIGRATE_PFN_MIGRATE
+
+
+返回时，对可迁移源页：
+
+页面已锁定
+CPU PTE 已临时撤销
+页面内容稳定
+src[] 已包含 PFN 和状态
+
+
+返回 0 不代表所有页面均迁移成功，只表示准备阶段没有整体错误。驱动仍需逐项检查：
+
+src[i] & MIGRATE_PFN_MIGRATE
+
+7. src[] 和 dst[] 的格式
+
+两者均是 unsigned long 数组，每个元素对应一个虚拟页面：
+
+高位：PFN
+低位：状态标志
+
+
+典型标志包括：
+
+MIGRATE_PFN_VALID
+    条目含有效 PFN
+
+MIGRATE_PFN_MIGRATE
+    页面可迁移，迁移后仍保留则表示成功
+
+MIGRATE_PFN_WRITE
+    映射允许写入
+
+
+转换关系：
+
+entry = migrate_pfn(page_to_pfn(page));
+page = migrate_pfn_to_page(entry);
+
+
+完整链路：
+
+struct page *
+    ↓ page_to_pfn()
+PFN
+    ↓ migrate_pfn()
+src[i] 或 dst[i]
+
+
+反向为：
+
+src[i] 或 dst[i]
+    ↓ migrate_pfn_to_page()
+struct page *
+    ↓ page_folio()
+struct folio *
+
+
+src[]、dst[] 不保存页面内容，也不保存完整 struct page 元数据，只保存源目标 PFN和少量迁移控制状态。
+
+8. 系统页迁移到 DEVICE_PRIVATE
+分配和复制
+
+dmirror_migrate_alloc_and_copy() 对每个可迁移条目执行：
+
+src[] 解码得到系统源页 spage
+    ↓
+分配 DEVICE_PRIVATE 页 dpage
+    ↓
+取得 BACKING_PAGE(dpage)
+    ↓
+copy_highpage(rpage, spage)
+    ↓
+dst[] 编码 dpage PFN
+
+
+其中：
+
+spage
+    普通系统 RAM 页
+
+dpage
+    DEVICE_PRIVATE 的 ZONE_DEVICE 描述页
+
+rpage = BACKING_PAGE(dpage)
+    test_hmm 用普通 RAM 模拟的设备数据存储
+
+
+test_hmm 没有真实设备显存，所以使用 rpage 保存模拟设备数据。
+
+MM 管理状态迁移
+
+migrate_vma_pages() 内部调用类似：
+
+migrate_folio(mapping,
+	      page_folio(dpage),
+	      page_folio(spage),
+	      MIGRATE_SYNC_NO_COPY);
+
+
+MIGRATE_SYNC_NO_COPY 表示数据已经由驱动复制，此处只迁移 Linux MM 管理关系。
+
+“元数据迁移”不是把 struct page 内容复制到设备内存，而是将：
+
+匿名内存对象归属
+mapping/index
+rmap 关系
+页面状态和记账
+逻辑页面承载关系
+
+
+从源 folio 转移到目标 folio。
+
+源、目标 struct page 始终是两个独立对象。
+
+9. 设备页表更新与 finalize
+更新设备页表
+
+dmirror_migrate_finalize_and_map() 在 migrate_vma_pages() 之后执行：
+
+if (!(*src & MIGRATE_PFN_MIGRATE))
+	continue;
+
+dpage = migrate_pfn_to_page(*dst);
+entry = BACKING_PAGE(dpage);
+
+if (*dst & MIGRATE_PFN_WRITE)
+	entry = xa_tag_pointer(entry, DPT_XA_TAG_WRITE);
+
+xa_store(&dmirror->pt, virtual_page_number, entry, GFP_ATOMIC);
+
+
+此时 MIGRATE_PFN_MIGRATE 仍存在，表示该页迁移成功。
+
+完成 CPU 页表切换
+
+migrate_device_finalize() 或 migrate_vma_finalize() 负责：
+
+迁移成功：
+    migration entry → 目标页或 device-private entry
+
+迁移失败：
+    migration entry → 原源页
+
+随后：
+    普通页面加入 LRU
+    解锁源目标 folio
+    释放迁移过程持有的引用
+
+
+核心提交或回滚逻辑：
+
+if (!(src_pfns[i] & MIGRATE_PFN_MIGRATE) || !dst)
+	dst = src;
+
+remove_migration_ptes(src, dst, false);
+
+10. migrate_fault 的完整路径
+
+migrate_fault 验证页面迁入设备后，CPU 再访问原地址时的缺页回迁：
+
+系统 RAM 页面
+    ↓ migrate_vma_*
+DEVICE_PRIVATE 页面
+    ↓
+CPU PTE 变为 device-private entry
+    ↓
+CPU 访问原虚拟地址
+    ↓
+CPU page fault
+    ↓
+dev_pagemap_ops.migrate_to_ram
+    ↓
+dmirror_devmem_fault()
+    ↓
+分配普通 RAM 目标页
+    ↓
+BACKING_PAGE(dpage) 复制到普通 RAM 页
+    ↓
+migrate_vma_pages()
+    ↓
+migrate_vma_finalize()
+    ↓
+CPU 恢复普通 present PTE
+
+
+该路径不使用 hmm_range_fault()，因为：
+
+迁入设备时，migrate_vma_setup() 已直接收集源页；
+回迁时，device-private entry 已能定位设备页；
+需要执行的是页面迁移，不是设备页表镜像。
+11. DEVICE_PRIVATE 与 DEVICE_COHERENT
+DEVICE_PRIVATE
+设备可访问
+CPU 不可直接访问
+CPU 访问会触发 fault 并迁回系统 RAM
+
+
+默认模块初始化：
+
+/dev/hmm_dmirror0
+/dev/hmm_dmirror1
+
+DEVICE_COHERENT
+设备可访问
+CPU 也可直接访问
+平台提供必要的一致性语义
+
+
+只有同时提供：
+
+spm_addr_dev0
+spm_addr_dev1
+
+
+模块才初始化：
+
+/dev/hmm_dmirror2
+/dev/hmm_dmirror3
+
+
+缺少 SPM 地址时，coherent 测试打开 /dev/hmm_dmirror2 失败，并主动标记为 SKIP，不属于测试失败。
+
+12. ftrace 使用要点
+常用文件
+available_filter_functions
+    可被 function tracer 跟踪的函数
+
+enabled_functions
+    当前实际挂接 callback 的函数
+
+set_ftrace_filter
+    配置 function tracer 函数范围
+
+set_graph_function
+    配置 function_graph 根函数
+
+function_profile_enabled
+    按 CPU 汇总调用次数和耗时
+
+trace_clock
+    选择 trace 时间源
+
+Clock 选择
+local
+    开销低，跨 CPU 不一定同步
+
+global
+    跨 CPU 单调一致，适合 HMM 综合分析
+
+counter
+    只表达严格事件顺序，不表示真实时间
+
+mono / mono_raw
+    适合与标准单调时间域对齐
+
+max_graph_depth
+0
+    不限制调用深度
+
+1
+    只显示根函数
+
+2 及以上
+    逐层增加展开深度
+
+缺少函数入口的原因
+
+如果 trace 中存在：
+
+} /* hmm_range_fault */
+
+
+但没有：
+
+hmm_range_fault() {
+
+
+通常说明 per-CPU ring buffer 中较早记录被覆盖，或只查看了调用树中间片段。
+
+处理方式：
+
+echo 8192 > /sys/kernel/tracing/buffer_size_kb
+echo 5 > /sys/kernel/tracing/max_graph_depth
+
+
+同时只运行单项测试，减少记录量。
+
+13. 单项和多项测试选择
+
+精确运行一个测试：
+
+./test_hmm.sh smoke \
+	-r hmm.hmm_device_private.migrate
+
+
+运行多个测试：
+
+./test_hmm.sh smoke \
+	-t anon_read \
+	-t migrate \
+	-t migrate_fault
+
+
+当前 harness 的过滤器按参数顺序处理，并在第一次匹配时返回，因此不应在上述命令前添加：
+
+-v hmm_device_private
+
+
+否则会选中该 variant 下全部测试。
+
+如果输出：
+
+1..0
+Starting 0 tests
+
+
+表示测试名称没有匹配，并非 HMM 或驱动执行失败。
+
+主要困惑与解决思路
+困惑一：buffer->ptr 写入后为何 buffer->mirror 能读取
+
+两者不是同一块内存。数据路径是：
+
+buffer->ptr 对应系统页
+    ↓ 设备模拟读取
+bounce buffer
+    ↓ copy_to_user()
+buffer->mirror
+
+
+mirror 只是测试结果缓冲区。
+
+困惑二：为什么先 read 再 fault
+
+第一轮 read 是快速路径：
+
+设备页表已有映射
+    → 直接读取
+
+设备页表缺少映射
+    → 返回 -ENOENT
+    → dmirror_fault()
+    → 建立映射
+    → 重试读取
+
+
+并非读取成功后再 fault。
+
+困惑三：hmm_range_fault() 为什么没有更新 dmirror->pt
+
+HMM 核心只产出 PFN 和权限信息。驱动在其返回后通过：
+
+xa_store(&dmirror->pt, ...)
+
+
+构造设备特定页表。
+
+困惑四：元数据迁移是否把 struct page 搬到设备内存
+
+不是。struct page 描述符仍存在于内核管理内存中。迁移的是逻辑页面的归属、映射和管理关系，数据迁移由驱动独立完成。
+
+困惑五：为什么 migrate_fault 不经过 hmm_range_fault()
+
+migrate_vma_setup() 已负责源页收集，device-private entry 已能定位设备页，因此直接使用迁移和 CPU fault 回调，不需要再次建立设备页表镜像。
+
+困惑六：测试模块已加载但 /dev/hmm_dmirror0 不存在
+
+cdev_add() 不创建设备节点。必须由脚本执行：
+
+mknod /dev/hmm_dmirror0 c "$major" 0
+mknod /dev/hmm_dmirror1 c "$major" 1
+
+困惑七：为什么 coherent 测试被跳过
+
+没有提供有效的 SPM 地址，模块只初始化 DEVICE_PRIVATE 设备，没有注册 minor 2 和 3，因此 /dev/hmm_dmirror2 无法打开。
+
+最终技术主线
+地址空间镜像：
+    hmm_range_fault()
+    → CPU 页表信息
+    → 驱动构造 dmirror->pt
+    → 设备访问系统内存
+
+设备内存迁移：
+    migrate_vma_setup()
+    → 驱动分配并复制
+    → migrate_vma_pages()
+    → 驱动更新设备页表
+    → migrate_vma_finalize()
+
+CPU 缺页回迁：
+    device-private entry
+    → CPU page fault
+    → dev_pagemap_ops.migrate_to_ram
+    → migrate_vma_* 迁回系统 RAM
+
+
+本次调试的核心认识是：HMM 不替设备驱动管理设备页表，也不替驱动复制设备数据；HMM 提供安全读取 CPU 页表、协调 MMU notifier、表示设备页面以及参与通用页面迁移的基础机制，具体设备页表建立与数据搬运仍由驱动负责。
