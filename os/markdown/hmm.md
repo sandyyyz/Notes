@@ -745,9 +745,388 @@ struct migrate_vma_ops {
 
 ```
 
+## kernel 5.14
+
+### test: anon_read
+
+testing purpose:  
+```
+某个进程虚拟地址当前对应哪个系统物理页，映射是否有效以及是否可写？
+
+
+典型路径是模拟设备访问仍驻留在系统内存中的数据：
+
+设备访问用户虚拟地址
+    ↓
+dmirror->pt 中没有映射
+    ↓
+dmirror_fault()
+    ↓
+hmm_range_fault()
+    ↓
+遍历进程 CPU 页表
+    ↓
+输出 PFN 和权限到 hmm_range.hmm_pfns[]
+    ↓
+驱动通过 xa_store() 更新 dmirror->pt
+    ↓
+设备重新读取系统页面
+```
+
+```
+hmm_dmirror_cmd(..., HMM_DMIRROR_READ, ...)
+    ->dmirror_read(dmirror, &cmd)
+        ->dmirror_do_read(dmirror, start, end, &bounce);[copy data in dmirros to bounce->ptr]
+          dmirror_fault(dmirror, start, end, false);[marked range need to fault in dmirror with hmm_range, then fault them]
+            ->dmirror_range_fault(dmirror, &range);
+                ->hmm_range_fault(range);
+```
+
+在`hmm_range_fault`中将相关进程地址映射保存到`range.hmm_pfns[]`中，并且由`dmirror_fault`建立设备页表的正确映射(`struct page`).随后在`dmirror_do_read`中使用`memcpy_from_page`函数，模拟设备从系统页读取数据的过程(to bounce->ptr)
+
+```c
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+static int hmm_vma_handle_pmd(struct mm_walk *walk, unsigned long addr,
+			      unsigned long end, unsigned long hmm_pfns[],
+			      pmd_t pmd)
+{
+	struct hmm_vma_walk *hmm_vma_walk = walk->private;
+	struct hmm_range *range = hmm_vma_walk->range;
+	unsigned long pfn, npages, i;
+	unsigned int required_fault;
+	unsigned long cpu_flags;
+
+	npages = (end - addr) >> PAGE_SHIFT;
+	cpu_flags = pmd_to_hmm_pfn_flags(range, pmd);
+	required_fault =
+		hmm_range_need_fault(hmm_vma_walk, hmm_pfns, npages, cpu_flags);
+	if (required_fault)
+		return hmm_vma_fault(addr, end, required_fault, walk);
+
+	pfn = pmd_pfn(pmd) + ((addr & ~PMD_MASK) >> PAGE_SHIFT);
+	for (i = 0; addr < end; addr += PAGE_SIZE, i++, pfn++)
+		hmm_pfns[i] = pfn | cpu_flags; /* set pfns here */
+	return 0;
+}
+```
+
+### test: migrate_fault
+
+testing purpose:  
+
+```
+第一阶段：系统页迁移到 DEVICE_PRIVATE
+
+buffer->ptr 对应普通系统页
+    ↓
+HMM_DMIRROR_MIGRATE_TO_DEV
+    ↓
+migrate_vma_setup()
+    ↓
+分配 DEVICE_PRIVATE 目标页
+    ↓
+复制系统页数据到模拟设备内存
+    ↓
+migrate_vma_pages()
+    ↓
+驱动更新 dmirror->pt
+    ↓
+migrate_vma_finalize()
+    ↓
+CPU PTE 变为 device-private entry
+
+
+第二阶段：CPU 访问 DEVICE_PRIVATE 页
+
+迁移完成后，CPU 再访问同一个 buffer->ptr：
+
+CPU load/store buffer->ptr
+    ↓
+CPU 页表中不是普通 present PTE
+    ↓
+发现 device-private 特殊页表项
+    ↓
+CPU page fault
+    ↓
+根据 device-private entry 找到 dpage
+    ↓
+根据 dpage->pgmap 找到 dev_pagemap_ops
+    ↓
+调用 .migrate_to_ram
+    ↓
+dmirror_devmem_fault()
+    ↓
+使用 migrate_vma_* 迁回系统 RAM
+```
+```c
+/*
+ * Migrate anonymous memory to device private memory and fault some of it back
+ * to system memory, then try migrating the resulting mix of system and device
+ * private memory to the device.
+ */
+TEST_F(hmm, migrate_fault)
+```
+
+```c
+
+/* migrate memory to device */
+    	ret = hmm_migrate_sys_to_dev(self->fd, buffer, npages);
+            ->	return hmm_dmirror_cmd(fd, HMM_DMIRROR_MIGRATE_TO_DEV, buffer, npages);
+                -> static long dmirror_fops_unlocked_ioctl(struct file *filp,
+					unsigned int command,
+					unsigned long arg)
+                    ->ret = dmirror_migrate_to_device(dmirror, &cmd);
+                        ->ret = migrate_vma_setup(&args);
+                            ->migrate_vma_collect(args);
+                                    ...->__walk_page_range(...)
+                            ->dmirror_migrate_alloc_and_copy(&args, dmirror);
+                            ->migrate_vma_pages(&args);
+                            ->dmirror_migrate_finalize_and_map(&args, dmirror);
+                            ->migrate_vma_finalize(&args);
+
+
+```
+
+```c
+	args.vma = vma;
+		args.src = src_pfns;
+		args.dst = dst_pfns;
+		args.start = addr;
+		args.end = next;
+		args.pgmap_owner = dmirror->mdevice;
+		args.flags = MIGRATE_VMA_SELECT_SYSTEM;
+		ret = migrate_vma_setup(&args);
+```
+
+### migrate_device_finalize
+
+```
+1. 从 src_pfns[] 和 dst_pfns[] 解码源、目标 folio；
+2. 判断该页是否迁移成功；
+3. 失败时释放目标页并将 dst 设回 src；
+4. 普通 RAM 目标页加入 LRU；
+5. 使用 remove_migration_ptes()：
+       成功时切换到目标页；
+       失败时恢复原源页；
+6. 解锁并释放源 folio 的迁移引用；
+7. 成功时再解锁并释放目标 folio 的迁移引用。
+```
+
+
+### migrate_device_pages
+
+`migrate_device_pages` is not for copying data,but:  
+```
+1. 验证目标页是否存在；
+2
+2. 对空 PTE 场景直接插入目标页；
+3
+3. 检查设备目标页类型是否受支持；
+4
+4. 限制迁往设备内存的源页类型；
+5
+5. 调用 migrate_folio() 迁移页面的 MM 元数据；
+6
+6. 通过 MIGRATE_PFN_MIGRATE 标志记录逐页成功或失败；
+7
+7. 在直接插页场景中协调 MMU notifier。
+```
+
+### dmirror_migrate_finalize_and_map
+
+```
+遍历迁移结果，对仍保留 MIGRATE_PFN_MIGRATE 的成功页面，从 dst[] 恢复 DEVICE_PRIVATE 目标页，取得其模拟数据后备页，并将“用户虚拟页号 → 后备页及写权限”的映射写入 dmirror->pt。
+```
+
+### dmirror_migrate_alloc_and_copy
+
+```
+dmirror_migrate_alloc_and_copy() 主要执行四项工作：
+
+1. 根据 src[] 筛选 migrate_vma_setup() 认定可迁移的页面；
+2. 为每个页面分配 DEVICE_PRIVATE 目标页 dpage；
+3. 将普通系统页 spage 的数据复制到目标设备页的模拟后备页 rpage；
+4. 在 dst[] 中填写目标 PFN 和写权限，交给 migrate_vma_pages() 继续处理。
+```
+
+### migrate_vma_setup
+
+`migrate_vma_setup`:  
+```
+将指定虚拟地址范围中的源页面收集到 src[]，锁定并临时解除 CPU 映射，排除被 pin 或不适合迁移的页面，并为真正可迁移的页面设置 MIGRATE_PFN_MIGRATE，从而为驱动分配目标页和复制数据创造稳定窗口。
+```
+
+return 0 doesb't prove all the pages can be migrated:  
+
+```
+范围内所有页面均可迁移
+范围内只有部分页面可迁移
+范围内没有任何页面可迁移
+范围内页表项为空，但允许驱动分配目标页
+```
+
+so driver should check all the page in src[] later.  
+### struct migrate_vma
+
+```c
+
+struct migrate_vma {
+	struct vm_area_struct	*vma;
+	/*
+	 * Both src and dst array must be big enough for
+	 * (end - start) >> PAGE_SHIFT entries.
+	 *
+	 * The src array must not be modified by the caller after
+	 * migrate_vma_setup(), and must not change the dst array after
+	 * migrate_vma_pages() returns.
+	 */
+	unsigned long		*dst;
+	unsigned long		*src;
+	unsigned long		cpages;
+	unsigned long		npages;
+	unsigned long		start;
+	unsigned long		end;
+
+	/*
+	 * Set to the owner value also stored in page->pgmap->owner for
+	 * migrating out of device private memory. The flags also need to
+	 * be set to MIGRATE_VMA_SELECT_DEVICE_PRIVATE.
+	 * The caller should always set this field when using mmu notifier
+	 * callbacks to avoid device MMU invalidations for device private
+	 * pages that are not being migrated.
+	 */
+	void			*pgmap_owner;
+	unsigned long		flags;
+
+	/*
+	 * Set to vmf->page if this is being called to migrate a page as part of
+	 * a migrate_to_ram() callback.
+	 */
+	struct page		*fault_page;
+};
+```
+
+### hmm_range_fault
+
+```c
+/**
+ * hmm_range_fault - try to fault some address in a virtual address range
+ * @range:	argument structure
+ *
+ * Returns 0 on success or one of the following error codes:
+ *
+ * -EINVAL:	Invalid arguments or mm or virtual address is in an invalid vma
+ *		(e.g., device file vma).
+ * -ENOMEM:	Out of memory.
+ * -EPERM:	Invalid permission (e.g., asking for write and range is read
+ *		only).
+ * -EBUSY:	The range has been invalidated and the caller needs to wait for
+ *		the invalidation to finish.
+ * -EFAULT:     A page was requested to be valid and could not be made valid
+ *              ie it has no backing VMA or it is illegal to access
+ *
+ * This is similar to get_user_pages(), except that it can read the page tables
+ * without mutating them (ie causing faults).
+ */
+int hmm_range_fault(struct hmm_range *range)
+```
+
+`hmm_range_fault()` 本身主要负责遍历 CPU 页表，并把每个虚拟页面的结果写入 `hmm_range.hmm_pfns[]`。真正更新 `dmirror->pt` 的动作发生在 `hmm_range_fault()` 返回之后，由 `dmirror_fault()` 对 `hmm_pfns[]` 逐项解析并调用 `xa_store()` 完成。 HMM 核心只提供页表查询结果，不会直接操作驱动私有的模拟设备页表。
+
+
+### dmirror
+
+`dmirror`: Data attached to the open device file, like:
+
+```c
+/*
+ * Data attached to the open device file.
+ * Note that it might be shared after a fork().
+ */
+struct dmirror {
+	struct dmirror_device		*mdevice;
+	struct xarray			pt;
+	struct mmu_interval_notifier	notifier;
+	struct mutex			mutex;
+};
+```
+在这个测试流程中，`dmirror`实际上是设备对应的私有内存。而`dmirror->pt`是模拟设备页表  
+而`bounce->ptr`模拟设备内部的接收缓冲区.  
+`buffer->ptr`为将被设备读取的system memory  
+`buffer->mirror`为用户态从设备获取的读取结果  
+
+```c
+
+/* hmm_dmirror_cmd */
+...
+/* Simulate a device reading system memory. */
+	cmd.addr = (__u64)buffer->ptr;
+	cmd.ptr = (__u64)buffer->mirror;
+	cmd.npages = npages;
+
+/* dmirror_fops_unlocked_ioctl */
+dmirror = filp->private_data
+/*dmirror_bounce_init */
+bounce->addr = buffer->ptr
+
+```
+
+### migrate_vma_
+
+```c
+struct migrate_vma {
+	struct vm_area_struct	*vma;
+	/*
+	 * Both src and dst array must be big enough for
+	 * (end - start) >> PAGE_SHIFT entries.
+	 *
+	 * The src array must not be modified by the caller after
+	 * migrate_vma_setup(), and must not change the dst array after
+	 * migrate_vma_pages() returns.
+	 */
+	unsigned long		*dst;
+	unsigned long		*src;
+	unsigned long		cpages;
+	unsigned long		npages;
+	unsigned long		start;
+	unsigned long		end;
+
+	/*
+	 * Set to the owner value also stored in page->pgmap->owner for
+	 * migrating out of device private memory. The flags also need to
+	 * be set to MIGRATE_VMA_SELECT_DEVICE_PRIVATE.
+	 * The caller should always set this field when using mmu notifier
+	 * callbacks to avoid device MMU invalidations for device private
+	 * pages that are not being migrated.
+	 */
+	void			*pgmap_owner;
+	unsigned long		flags;
+
+	/*
+	 * Set to vmf->page if this is being called to migrate a page as part of
+	 * a migrate_to_ram() callback.
+	 */
+	struct page		*fault_page;
+};
+
+```
+
 ## TODO
 
 - 阅读 v4.14 hmm.c 源码
+
+## important code
+
+| 测试                 | 主要问题                   | 重点函数                                |
+| ------------------ | ---------------------- | ----------------------------------- |
+| `anon_read`        | 设备如何读取普通匿名页            | `hmm_range_fault`、`dmirror_do_read` |
+| `anon_write`       | 写权限如何请求和验证             | `HMM_PFN_REQ_WRITE`、写保护处理           |
+| `snapshot`         | 不主动 fault 时如何读取页表状态    | snapshot ioctl、`hmm_range_fault`    |
+| `migrate`          | 页面如何进入设备私有内存           | `migrate_vma_setup/pages/finalize`  |
+| `migrate_fault`    | CPU 如何访问设备私有页          | fault handler、`migrate_to_ram`      |
+| `migrate_multiple` | 多页迁移与批处理               | `migrate_vma_*`、循环范围                |
+| `anon_teardown`    | `mm` 销毁与 notifier 生命周期 | `mmu_interval_notifier_remove`      |
+| `exclusive`        | 设备独占页和 CPU 映射处理        | exclusive entry、`-EBUSY` 分支         |
 
 ## References
 
