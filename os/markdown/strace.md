@@ -85,4 +85,71 @@ ptrace(PTRACE_ATTACH, pid, NULL, NULL);
 
 ## 常用选项
 
-TODO: 待补充
+### 1. 指定跟踪对象
+
+| 选项 | 作用 | 示例 |
+| --- | --- | --- |
+| `-p <pid>` | attach 到已运行的进程。可重复指定以跟踪多个进程。 | `strace -p 1234` |
+| `-f` | 跟踪 `fork`、`vfork`、`clone` 创建的子进程和线程。 | `strace -f ./server` |
+| `-ff` | 跟踪子进程，并为每个进程分别写入输出文件。 | `strace -ff -o trace ./server` |
+
+附加到进程通常需要相应权限。跟踪多线程程序时应使用 `-f`，否则可能遗漏线程发起的系统调用。
+
+### 2. 筛选系统调用
+
+| 选项 | 作用 | 示例 |
+| --- | --- | --- |
+| `-e trace=<set>` | 只跟踪指定类别或名称的系统调用。 | `strace -e trace=file ls` |
+| `-e trace=<call>` | 只跟踪一个或多个具体调用。 | `strace -e trace=openat,read ls` |
+| `-e signal=<set>` | 只显示指定信号相关事件。 | `strace -e signal=SIGTERM -p 1234` |
+| `-e trace=%network` | 跟踪网络相关系统调用。 | `strace -e trace=%network ./client` |
+| `-e trace=%process` | 跟踪进程创建、执行和退出。 | `strace -e trace=%process ./script` |
+
+常见类别包括 `%file`、`%network`、`%process`、`%memory` 和 `%signal`。可以用 `-e trace=!openat` 排除某个调用，减少无关输出。
+
+### 3. 控制输出内容
+
+| 选项 | 作用 | 示例 |
+| --- | --- | --- |
+| `-o <file>` | 将输出写入文件，不与被跟踪程序的标准输出混在一起。 | `strace -o trace.log ./app` |
+| `-s <n>` | 设置字符串最大打印长度，默认值较短。 | `strace -s 256 ./app` |
+| `-y` | 将文件描述符解码为对应的文件或 socket 路径。 | `strace -y -e trace=read,write ./app` |
+| `-yy` | 在 `-y` 基础上尽可能显示 socket 的详细信息。 | `strace -yy -e trace=network ./app` |
+| `-v` | 更详细地打印结构体字段。可重复使用以增加详细程度。 | `strace -v ./app` |
+
+需要查看完整参数时，可结合使用 `-s` 和 `-yy`。跟踪输出可能包含敏感数据，应妥善保护日志文件。
+
+### 4. 记录时间与耗时
+
+| 选项 | 作用 | 示例 |
+| --- | --- | --- |
+| `-t` / `-tt` / `-ttt` | 分别以秒、微秒或 Unix 时间戳显示时间。 | `strace -tt ./app` |
+| `-T` | 在每个系统调用末尾显示耗时。 | `strace -T ./app` |
+| `-r` | 显示相邻输出行之间的相对时间间隔。 | `strace -r ./app` |
+| `-w` | 显示系统调用等待时间；通常与 `-c` 结合使用。 | `strace -cw ./app` |
+
+定位耗时较长的系统调用：
+
+```bash
+strace -f -ttT -e trace=file -o file.trace ./app
+```
+
+### 5. 统计与调用栈
+
+| 选项 | 作用 | 示例 |
+| --- | --- | --- |
+| `-c` | 汇总系统调用次数、错误数和耗时，不打印逐条调用。 | `strace -c ./app` |
+| `-C` | 在打印逐条调用的同时显示统计结果。 | `strace -C ./app` |
+| `-k` | 尝试为每个系统调用打印用户态调用栈。 | `strace -k ./app` |
+
+`-c` 用于查看系统调用的总体开销；如果还需要保留调用顺序，应使用 `-C` 或另行记录明细。
+
+### 按场景选择
+
+- **文件访问异常**：`strace -f -e trace=%file -s 256 ./app`
+- **网络连接异常**：`strace -f -yy -e trace=%network ./app`
+- **定位慢系统调用**：`strace -f -ttT -o trace.log ./app`
+- **查看调用开销**：`strace -f -c ./app`
+- **分析已运行进程**：`strace -f -p <pid>`
+
+选项可以组合使用。排障时可先用 `-e trace=<set>` 缩小范围，再根据需要增加 `-T`、`-s`、`-y` 或 `-o`。
