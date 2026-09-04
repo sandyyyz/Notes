@@ -1,10 +1,18 @@
 # Heterogeneous Memory Management
 
-HMM is a set of helpers to facilitate several aspects of address space
-sharing and device memory management.
-Unlike existing sharing mechanisms that rely on pinning pages used by a
-device, HMM relies on mmu_notifier to propagate CPU page table updates to
-the device page table.
+HMM（Heterogeneous Memory Management）是一组用于进程地址空间共享和设备内存管理的内核 helper。它不依赖长期 pin 住设备访问的系统内存页，而是通过 `mmu_notifier` 将 CPU 页表变化传播给设备页表，使设备能够更安全地 mirror 进程地址空间。
+
+## 核心问题
+
+传统设备访问用户内存通常依赖 pin page：设备 DMA 期间页面不能迁移、回收或解除映射。这种方式简单，但会限制内存管理能力，也不适合 GPU、CXL device memory 等需要在系统内存和设备内存之间迁移页面的场景。
+
+HMM 试图解决三个层面的问题：
+
+| 层面 | 问题 | HMM 提供的能力 |
+| --- | --- | --- |
+| 地址空间 | CPU 和设备需要理解同一进程虚拟地址 | mirror `mm_struct`，并通过 notifier 同步失效 |
+| 页面驻留 | 页面可能在 system memory 和 device memory 之间迁移 | `ZONE_DEVICE`、device private page、迁移 helper |
+| 生命周期 | CPU 页表变化不能让设备继续使用旧映射 | `mmu_notifier` / `mmu_interval_notifier` 协调失效 |
 
 Design purpose:
 
@@ -12,6 +20,20 @@ Design purpose:
 2. Allow migrating ranges of memory to the device to take advantage of its lower latency and higher bandwidth.
 3. Share the virtual address space between device and CPU (by copying the CPU page table to the device's MMU, or assigning a device memory page in the host mem-table; the device is thus supposed to have its own MMU with a page table per process it wants to mirror).
 4. Provide a common API that can be used by any such device in order to mirror a process address space.
+
+## 阅读路径
+
+```text
+mmu_notifier
+  ↓
+hmm_mirror / hmm_range
+  ↓
+hmm_range_fault
+  ↓
+device private page
+  ↓
+migrate_vma_* / migrate_device_*
+```
 
 ## patches
 
@@ -70,7 +92,7 @@ int hmm_mirror_register(struct hmm_mirror *mirror, struct mm_struct *mm)
 }
 EXPORT_SYMBOL(hmm_mirror_register);
 ```
-主要是将mirror添加到对应hmm的mirrors链表中。  
+主要是将 mirror 添加到对应 `hmm->mirrors` 链表中。
 
 #### hmm_mirror
 
@@ -92,7 +114,7 @@ struct hmm_mirror {
 	struct list_head		list;
 };
 ```
-这是hmm中per device的一个数据结构，而hmm是mm-unique的。hmm将通过mirrors链表追踪address space中所有设备注册的mirror.  
+这是 HMM 中 per-device 的数据结构，而 `struct hmm` 是 per-`mm_struct` 的。HMM 通过 `mirrors` 链表追踪同一个 address space 中所有设备注册的 mirror。
 
 #### struct hmm
 
@@ -119,7 +141,7 @@ struct hmm {
 };
 ```
 
-每个hmm_ mirror将会被放入hmm->mirrors 这个链表中，每个mirror的区别在于hmm_mirror_ops,其中定义了该device该如何同步cpu和device pagetable.
+每个 `hmm_mirror` 都会被放入 `hmm->mirrors` 链表。不同 mirror 的关键差异在于 `hmm_mirror_ops`，其中定义了对应 device 如何同步 CPU page table 与 device page table。
 
 #### hmm_mirror_ops
 
@@ -1116,6 +1138,8 @@ struct migrate_vma {
 - 阅读 v4.14 hmm.c 源码
 
 ## important code
+
+这些测试可以按“设备读写普通匿名页 → 页面迁移到设备 → CPU fault 回迁 → notifier 生命周期”这条线阅读：
 
 | 测试                 | 主要问题                   | 重点函数                                |
 | ------------------ | ---------------------- | ----------------------------------- |

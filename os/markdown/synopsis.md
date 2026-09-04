@@ -1,6 +1,6 @@
 # SYNOPSIS syntax
 
-在通过`man command`阅读指令手册时， 常常看到以下格式的指令描述，该描述遵循 *SYNOPSIS* 规范。
+在通过 `man command` 阅读指令手册时，常常看到以下格式的指令描述，该描述遵循 *SYNOPSIS* 规范。
 
 ```sh
 
@@ -13,7 +13,19 @@ SYNOPSIS
 
        strace -c [-dfwzZ] [-I n] [-b execve] [-e expr]... [-O overhead] [-S sortby] [-U columns] [-P path]... [-p pid]... [--seccomp-bpf] { -p pid | [-DDD]
 ```
-在这里对其语法规范做总结：   
+在这里对其语法规范做总结：
+
+## 速查表
+
+| 记号 | 含义 | 示例 |
+| --- | --- | --- |
+| `command` | 必须原样输入的命令或关键字 | `strace` |
+| `name` / `file` | 参数占位符，替换为实际值 | `-o file` |
+| `[...]` | 可选内容 | `[-f]` |
+| `{...}` | 必选组 | `{ -p pid | command }` |
+| `|` | 互斥选择，不是 Shell 管道 | `-p pid | command` |
+| `...` | 前一项可重复 | `[-e expr]...` |
+| `--` | 停止解析当前工具的选项 | `strace -- command -x` |
 
 ## 字面量
 
@@ -21,11 +33,11 @@ SYNOPSIS
 
 ## 参数占位符 <>
 
-`pid`、`file`、`command` 等名词表示需要替换为实际值的参数。如 `strace -p pid` 中的 `pid`
+`pid`、`file`、`command` 等名词表示需要替换为实际值的参数。如 `strace -p pid` 中的 `pid`。
 
 ## 可选项[...]
 
-可选项表示其中内容可省略，如`[-o file]`
+可选项表示其中内容可省略，如 `[-o file]`。
 
 ## 必选组{...}
 
@@ -166,4 +178,3 @@ strace ls -l /tmp
 | `toml`        | TOML 配置文件     |
 | `dockerfile`  | Dockerfile        |
 | `regex`       | 正则表达式，依赖渲染器支持 |
-

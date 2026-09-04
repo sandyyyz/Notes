@@ -3,19 +3,29 @@
 Rwlock 和 RCU 是 Linux 内核提供的两种完全不同的同步机制。
 **RCU** 不是简单的"更快的 rwlock"，而是与 rwlock 不同的同步思路：rwlock 的读者和写者在某些场景下会相互阻塞；相比之下，RCU 的读者永远不会被阻塞，但在 **grace period** 内可能读到旧数据。
 
+## 选型直觉
+
+| 问题 | 更偏向 |
+| --- | --- |
+| 读写都需要看到强一致的当前状态 | rwlock / rwsem |
+| 读路径极频繁，允许短时间看到旧版本 | RCU |
+| 临界区可能睡眠 | rwsem 或 SRCU，不能用普通 spin/rwlock |
+| 对象删除后需要延迟释放 | RCU / SRCU / Hazard Pointer |
+| 更新者需要原地修改共享对象 | rwlock 更直接；RCU 通常倾向 copy-update |
+
 ## Reader-Writer Lock / RCU 对照
 
-| Reader-Writer Lock | Read-Copy Update |
-|--------------------|------------------|
-| `rwlock_t` | `spinlock_t` |
-| `read_lock()` | `rcu_read_lock()` \* |
-| `read_unlock()` | `rcu_read_unlock()` \* |
-| `write_lock()` | `spin_lock()` |
-| `write_unlock()` | `spin_unlock()` |
-| `list_add()` | `list_add_rcu()` |
-| `list_add_tail()` | `list_add_tail_rcu()` |
-| `list_del()` | `list_del_rcu()` |
-| `list_for_each()` | `list_for_each_rcu()` |
+| Reader-Writer Lock | Read-Copy Update | 说明 |
+|--------------------|------------------| --- |
+| `rwlock_t` | `spinlock_t` | RCU 更新侧通常仍需普通锁串行化更新 |
+| `read_lock()` | `rcu_read_lock()` \* | RCU 读侧标记临界区，不阻塞写者 |
+| `read_unlock()` | `rcu_read_unlock()` \* | 退出后不能继续持有旧对象引用 |
+| `write_lock()` | `spin_lock()` | 写侧通过锁保护结构修改 |
+| `write_unlock()` | `spin_unlock()` | 修改完成后发布新版本或摘除旧对象 |
+| `list_add()` | `list_add_rcu()` | RCU list API 内含发布语义 |
+| `list_add_tail()` | `list_add_tail_rcu()` | 同上 |
+| `list_del()` | `list_del_rcu()` | 删除后不能立即释放旧对象 |
+| `list_for_each()` | `list_for_each_rcu()` | 读侧遍历需配合 `rcu_dereference()` 语义 |
 
 \* `rcu_read_lock()` 和 `rcu_read_unlock()` 在未开启 `CONFIG_PREEMPT` 时是空操作；开启抢占后，它们用于抑制抢占。
 
@@ -101,7 +111,15 @@ up_read(&my_rwsem);
 
 ### rwlock_irqsave 变体
 
-TODO: 待补充。
+当同一把锁既可能在进程上下文使用，也可能在中断上下文使用时，进程上下文加锁前需要保存并关闭本地中断，避免本 CPU 在持锁期间被中断打断，而中断处理程序再次尝试获取同一把锁导致死锁。
+
+```c
+unsigned long flags;
+
+write_lock_irqsave(&lock, flags);
+/* critical section */
+write_unlock_irqrestore(&lock, flags);
+```
 
 ### writer starvation 问题
 

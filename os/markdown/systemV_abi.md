@@ -2,6 +2,20 @@
 
 Arch: `AMD64`
 
+本文记录 AMD64 System V ABI 中与函数调用最相关的部分：寄存器归属、栈帧布局、参数分类、参数传递和返回值规则。后半部分结合汇编输出做验证，重点在理解 ABI 规则如何落到实际调用序列上。
+
+## 规则速览
+
+| 主题 | 要点 |
+| --- | --- |
+| 栈对齐 | 调用点需要满足 ABI 要求的 16-byte alignment |
+| caller-saved | 调用者若希望保留值，需要在 call 前自行保存 |
+| callee-saved | 被调用者使用前保存，返回前恢复 |
+| 参数分类 | 参数按 eightbyte 递归分类为 `INTEGER`、`SSE`、`SSEUP`、`X87`、`MEMORY` 等 |
+| 寄存器参数 | 整数/指针优先走 GPR，浮点/向量优先走 vector register |
+| 内存参数 | 过大、未对齐或分类为 `MEMORY` 的对象通过栈传递 |
+| 返回值 | 小对象可经寄存器返回，大对象通常通过隐藏 sret 指针返回 |
+
 ## Machine Interface
 
 ### Data Representation
@@ -12,22 +26,14 @@ Arch: `AMD64`
 
 ### Registers
 
-1. 16 通用 64-bit 寄存器
-2. AMD64: 16 128-bit-SSE寄存器
-3. Intel AVX (Advanced Vector Extensions), 16 256-bit wide AVX registers (%ymm0- %ymm15). The lower 128-bits of %ymm0- %ymm15 are aliased to the respective 128-bit
-SSE registers (%xmm0- %xmm15).
-4. Intel AVX-512 provides 32 512-bit wide SIMD registers
-(%zmm0- %zmm31). The lower 128-bits of %zmm0- %zmm31 are aliased to the respective 128-bit
-SSE registers (%xmm0- %xmm15). The lower 256-bits of %zmm0- %zmm31 are aliased to the
-respective 256-bit AVX registers (%ymm0- %ymm15). For purposes of parameter passing and
-function return, %xmmN, %ymmN and %zmmN refer to the same register. Only one of them can
-be used at the same time.
-5. Intel AVX-512 also provides 8 vector mask registers (%k0- %k7), each
-64-bit wide.
-6. vector register: 用于指代 SSE, AVX 或者 AVX-512寄存器。
-7. 8 80-bit-x87 浮点寄存器, 注意，这些x87寄存器不是传统的平坦寄存器， 而是一个寄存器栈， 需要通过`fldt`或者`fstpt`操作。逻辑上分为`%st0`-`%st7`
-8. Intel APX (Advanced Performance Extensions) provides 16 general purpose 64-bit
-registers (%r16- %r31).
+1. 16 个通用 64-bit 寄存器。
+2. AMD64 定义 16 个 128-bit SSE 寄存器。
+3. Intel AVX（Advanced Vector Extensions）提供 16 个 256-bit AVX registers（`%ymm0`-`%ymm15`）。每个 YMM 的低 128 bit 与对应 XMM 寄存器别名。
+4. Intel AVX-512 提供 32 个 512-bit SIMD registers（`%zmm0`-`%zmm31`）。每个 ZMM 的低 128 bit 与 XMM 别名，低 256 bit 与 YMM 别名。参数传递和返回值语义中，`%xmmN`、`%ymmN`、`%zmmN` 指向同一组物理寄存器视图，同一时刻只能按一种宽度使用。
+5. Intel AVX-512 还提供 8 个 64-bit vector mask registers（`%k0`-`%k7`）。
+6. vector register 在本文中泛指 SSE、AVX 或 AVX-512 寄存器。
+7. x87 提供 8 个 80-bit 浮点寄存器。注意这些寄存器不是传统平坦寄存器，而是寄存器栈，需要通过 `fldt`、`fstpt` 等指令压栈/出栈，逻辑上记为 `%st0`-`%st7`。
+8. Intel APX（Advanced Performance Extensions）额外提供 16 个通用 64-bit 寄存器（`%r16`-`%r31`）。
 
 属于 caller 的（callee-saved）寄存器：`%rbp, %rbx, %r12-%r15`
 属于 callee 的（caller-saved）寄存器：others

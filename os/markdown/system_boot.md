@@ -1,9 +1,24 @@
 # 系统启动流程
 
+系统启动链路可以概括为：固件完成硬件初始化并选择启动项，bootloader 将 Kernel 与 initramfs 放入内存，Kernel 建立内核态运行环境后执行 initramfs 中的 `/init`，最后由早期用户空间挂载真实 RootFS 并切换到系统的 PID 1。
+
+```text
+UEFI → (shim) → GRUB/bootloader → Kernel → initramfs /init → switch_root → systemd
+```
+
+| 阶段 | 核心职责 |
+| --- | --- |
+| UEFI | 初始化硬件、枚举设备、按启动项加载 EFI 程序 |
+| shim | 在 Secure Boot 场景下延伸发行版信任链 |
+| bootloader | 解析配置，加载 Kernel/initramfs，传递 kernel command line |
+| Kernel | 初始化内存、调度、中断、驱动模型和早期设备 |
+| initramfs | 加载根设备所需模块，组装存储，挂载真实 RootFS |
+| systemd/PID 1 | 接管用户态启动，启动系统服务 |
+
 ## UEFI
 
-系统上电后，跳转到一条固定地址执行，该地址存放了uefi-firmware程序，UEFI固件将完成CPU初始化、RAM初始化、pcie设备枚举等工作，尝试读取ESP中的efi程序，随后把该程序加载到内存进行执行。  
-在x86_64平台上，UEFI约定默认启动文件路径为：
+系统上电后，CPU 从平台约定的固件入口开始执行。UEFI firmware 完成 CPU 初始化、RAM 初始化、PCIe 设备枚举等工作后，尝试读取 ESP 中的 EFI 程序，并将其加载到内存执行。
+在 x86_64 平台上，UEFI 约定默认启动文件路径为：
 ```
 \EFI\BOOT\BOOTX64.EFI
 ```
@@ -51,12 +66,12 @@ GRUB 在自身启动并完成基本初始化后，通过 `prefix` 定位并执�
 
 ## kernel
 
-kernel首先完成内存、中断、调度、设备模型、驱动等初始化，此时内核可以正确管理CPU和内存。但是，由于驱动包含：  
+Kernel 首先完成内存、中断、调度、设备模型、驱动等初始化，此时内核可以正确管理 CPU 和内存。但是，由于驱动包含：
 
-1. 编译进vmlinuz的驱动(built-in),在载入内核后可以执行。
-2. 以module形式存在于rootfs内的驱动,需要从rootfs内载入内存后执行。
+1. 编译进 vmlinuz 的驱动（built-in），载入内核后即可执行；
+2. 以 module 形式存在于 RootFS 内的驱动，需要从 RootFS 载入内存后才能执行。
 
-此时由于缺少必要的nvme等磁盘驱动，很可能还无法访问rootfs。  
+此时如果缺少 NVMe、SCSI、VirtIO、Device Mapper 等必要驱动，内核很可能还无法访问真实 RootFS。
 
 ---
 Q: 为什么不直接将必要的驱动提前编译进内核？  
@@ -66,11 +81,11 @@ A: 因为仅靠内建驱动无法优雅地解决通用硬件适配、模块化�
 
 ## initrd/initramfs
 
-initrd和initramfs实际上是两个为了实现相同目的而设计的不同机制。  
-initrd-initial ram disk, 将文件系统镜像放入内存并模拟成块设备，内核需要具体文件系统驱动将其挂载。  
-而initramfs-initial ram filesystem,将文件系统通过CPIO归档，内核可以将其解包到内存中的rootfs， 不需要经过块设备层。  
-目前initrd基本已经由initramfs代替。  
-initramfs本质上是一个能够独立运行的、位于内存中的最小用户空间，其内容只需要满足一个目标：让内核能够找到、准备并挂载真正的RootFS，然后把启动流程交给真实根文件系统中的PID 1。  
+initrd 和 initramfs 是为相同目标设计的两种早期用户空间机制。
+initrd（initial ram disk）将文件系统镜像放入内存并模拟成块设备，内核需要相应文件系统驱动将其挂载。
+initramfs（initial ram filesystem）则以 CPIO 归档形式随内核加载，内核可直接解包到内存中的 rootfs，不经过块设备层。
+目前 initrd 基本已经由 initramfs 取代。
+initramfs 本质上是一个能够独立运行的、位于内存中的最小用户空间，其目标是让内核找到、准备并挂载真正的 RootFS，然后把启动流程交给真实根文件系统中的 PID 1。
 
 内核识别initramfs缓冲区，将其中的CPIO归档解压到rootfs，于是initramfs中的目录和文件成为当前可见的根目录.
 

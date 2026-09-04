@@ -1,6 +1,16 @@
 # ftrace
 
-`ftrace` 是一系列相关 tracing utilities 的统称，其控制接口位于 `/sys/kernel/tracing` 或 `/sys/kernel/debug/tracing`。
+`ftrace` 是 Linux 内核内建 tracing 框架及相关 utilities 的统称，其控制接口位于 `/sys/kernel/tracing` 或 `/sys/kernel/debug/tracing`。它适合观察内核函数调用、tracepoint 事件、调度延迟和中断/抢占关闭时间等问题。
+
+## 能力边界
+
+| 能力 | 说明 |
+| --- | --- |
+| function tracing | 记录函数入口，适合快速定位调用路径 |
+| function graph tracing | 记录函数进入/返回和耗时，适合分析调用栈与延迟 |
+| event tracing | 基于静态 tracepoint，语义稳定、开销更可控 |
+| latency tracing | 记录 irq/preempt/wakeup 等最大延迟路径 |
+| filter/trigger | 按函数、PID、事件条件动态缩小追踪范围 |
 
 ## 使用方法
 
@@ -158,14 +168,14 @@ kernel-core-5.14.0-611.5.1.el9_7.x86_64
 kernel-core-5.14.0-503.40.1.el9.x86_64
 ```
 
-接下来下载SRPM包
+接下来下载 SRPM 包：
 
 ```sh
 
 dnf download --source <kernel_version>
 
 ```
- 编译lib目录下的内容形成多个kernel module(无法单独构建),  
+编译 `lib/` 目录下的内容会形成多个 kernel module，通常无法只对其中一个目标做完全独立构建：
 
 ```sh
 make -C "$KDIR" \
@@ -174,16 +184,16 @@ make -C "$KDIR" \
     modules
 ```
 
-我们这里只需要一个`hmm_test.ko`，且install 到 kernel中， 并且构建tools/testing/selftests/mm目录下的测试文件(主要是hmm_test)，从而保证test_hmm.sh可以正确运行hmm测试。  
+这里实际只需要 `hmm_test.ko` 并将其 install 到当前 kernel module 目录，同时构建 `tools/testing/selftests/mm` 下的测试程序（主要是 `hmm-test`），以保证 `test_hmm.sh` 可以正确运行 HMM 测试。
 
 
 ### 测试流程
 
-1. `test_hmm` kernel module 为每个模拟设备内存注册`ZONE_DEVICE`页面以及回调(`dmirror_devmem_ops`， 并且为每个模拟设备注册字符设备入口(`dmirror_fops`)。
-2. `TEST_F`展开，展开对应测试代码和每个测试实例private的`FIXTURE`, 用`self`引用
-3. 调用`FIXTURE_SETUP`, 该函数将调用`hmm_test.c`封装的`hmm_open`, 用于打开对应driver对应的字符设备，以初始化`self->fd`.
-4. 测试流程中调用`hmm-test.c`封装的函数，最终调用`hmm_dmirror_cmd`, 底层使用`ioctl`向driver发送处理请求.
-5. 使用`hmm-test -l`列出支持的测例， `hmm-test -r <name>`指定需要测试的测例
+1. `test_hmm` kernel module 为每个模拟设备内存注册 `ZONE_DEVICE` 页面以及回调（`dmirror_devmem_ops`），并为每个模拟设备注册字符设备入口（`dmirror_fops`）。
+2. `TEST_F` 展开对应测试代码和每个测试实例 private 的 `FIXTURE`，测试体通过 `self` 引用 fixture 状态。
+3. 调用 `FIXTURE_SETUP`，该函数会调用 `hmm_test.c` 封装的 `hmm_open`，打开 driver 对应的字符设备并初始化 `self->fd`。
+4. 测试流程中调用 `hmm-test.c` 封装的函数，最终进入 `hmm_dmirror_cmd`，底层通过 `ioctl` 向 driver 发送请求。
+5. 使用 `hmm-test -l` 列出支持的测例，使用 `hmm-test -r <name>` 指定需要运行的测例。
 
 `dmirror`: Data attached to the open device file, like:  
 

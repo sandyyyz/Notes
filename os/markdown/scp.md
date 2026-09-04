@@ -1,6 +1,14 @@
 # scp
 
-`scp` 用于在 Linux、macOS 和 Windows 机器之间复制文件，例如在本地计算机与开发服务器之间、或不同文件系统之间传输数据。
+`scp` 用于通过 SSH 在本地与远程主机之间复制文件。它适合临时传输单个文件或目录；如果需要断点续传、增量同步或大量文件同步，通常 `rsync` 更合适。
+
+## 语法速览
+
+| 方向 | 命令形式 |
+| --- | --- |
+| local -> remote | `scp local_path user@host:/remote/path` |
+| remote -> local | `scp user@host:/remote/path local_path` |
+| remote -> remote | `scp user1@host1:/path user2@host2:/path` |
 
 ## local -> remote
 
@@ -23,6 +31,16 @@ scp /path/in/local user@host_ip:/path/to/upload/
 ```sh
 scp username@server:/path/to/file /path/to/local/destination
 ```
+
+## 常用选项
+
+| 选项 | 作用 |
+| --- | --- |
+| `-r` | 递归复制目录 |
+| `-P <port>` | 指定 SSH 端口，注意是大写 `P` |
+| `-i <key>` | 指定私钥文件 |
+| `-C` | 启用压缩 |
+| `-p` | 保留修改时间、访问时间和权限 |
 
 ## References
 

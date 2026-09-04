@@ -8,6 +8,19 @@ __attribute__((属性名))
 
 它用于给函数、变量、类型、结构体成员等附加编译器属性，向编译器说明特殊的对齐、布局、调用约定、优化或检查要求。属性本身通常不是运行时执行的代码，而是在编译阶段影响诊断、目标代码生成或数据布局。
 
+## 使用位置
+
+| 作用对象 | 示例 |
+| --- | --- |
+| 函数 | `int f(void) __attribute__((noreturn));` |
+| 变量 | `int x __attribute__((aligned(64)));` |
+| 类型 | `typedef int v4si __attribute__((vector_size(16)));` |
+| 结构体成员 | `struct hdr { int len __attribute__((packed)); };` |
+
+内核中还常见 `__attribute__` 被宏封装，例如 `__always_inline`、`__packed`、`__aligned(x)`、`__section(x)` 等；阅读源码时应优先展开这些宏背后的语义，而不是只看属性名。
+
+## 常见属性
+
 常见属性：
 
 | 属性                       | 主要作用对象      | 含义                             | 常见使用场景                |

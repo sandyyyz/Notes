@@ -1,15 +1,26 @@
 # Build kernel
-本次采用服务器ubuntu24.04镜像构建container，并在container内部build kernel.
-首先是编译一个特定版本的完整内核。
-本次编译的是Linux 7.2.0-rc4内核。
+
+本笔记记录在 Ubuntu 24.04 container 中构建、调试和打包 Linux kernel 的过程，包含直接编译内核、基于 Buildroot 构建 QEMU 调试环境、RPM/SRPM 构建排查，以及 Docker 端口映射的补充澄清。
+
+## 流程速览
+
+| 阶段 | 目标 | 关键产物 |
+| --- | --- | --- |
+| 直接编译 kernel | 验证指定版本源码可构建 | `vmlinux`、`*.deb` 或模块 |
+| Buildroot 环境 | 构建可被 QEMU 启动的调试系统 | kernel image、rootfs、QEMU 启动脚本 |
+| GDB + QEMU | 远程调试内核早期启动和运行时路径 | `.gdbinit`、gdbstub `:1234` |
+| RPM/SRPM | 复现发行版内核构建流程 | `SOURCES/`、`SPECS/`、RPM 包 |
+| 问题排查 | 处理 UAPI、glibc、BPF selftest 等兼容问题 | root cause 与 patch 记录 |
+
+本次采用服务器 Ubuntu 24.04 镜像构建 container，并在 container 内部 build kernel。首先是编译一个特定版本的完整内核，本次编译的是 Linux 7.2.0-rc4 内核。
 
 ## clone kernel code of specific version
 
-首先基于提供的脚本略作修改，创建一个container。具体程序见ubuntu2404.sh。在创建好container后，在container使用git clone将/mnt/repo/下对应的源码目录copy到相应目录下。
+首先基于提供的脚本略作修改，创建一个 container。具体程序见 `ubuntu2404.sh`。在创建好 container 后，在 container 内使用 `git clone` 或直接复制 `/mnt/repo/` 下对应的源码目录到工作目录。
 
 ## make menuconfig
 
-make menuconfig 提供了一个方便的图形化界面调整内核编译设置。本次编译暂时未作修改。
+`make menuconfig` 提供图形化配置界面，用于调整内核编译选项。本次直接编译完整内核时暂未修改配置。
 
 ## make
 
@@ -18,9 +29,9 @@ make menuconfig 提供了一个方便的图形化界面调整内核编译设置�
 ```sh
 make deb-pkg -j20
 ```
-由于没有安装需求，本次暂时没有install.
+由于没有安装需求，本次暂时没有 install。
 
-## 基于buildroot构建测试环境
+## 基于 Buildroot 构建测试环境
 
 Buildroot 编译出的 Linux 内核与直接克隆内核仓库编译出的内核，可能基于完全相同的 Kbuild 和源码，但默认不能认为二者相同。 Buildroot 通常会控制源码版本、补丁、配置、交叉工具链、构建变量、设备树、模块安装和 rootfs 集成；直接编译则由开发者手工提供这些条件。
 
@@ -35,8 +46,8 @@ TODO: 关键的调试配置如下：
 
 ## debug
 
-使用buildroot构建内核。在container内部启动qemu, 并尝试在host端使用gdb对内核进行调试。
-创建并启动container配置参数：
+使用 Buildroot 构建内核。在 container 内部启动 QEMU，并尝试在 host 端使用 GDB 对内核进行调试。
+创建并启动 container 的配置参数：
 
 ### host端: ubuntu2404.sh
 
@@ -258,6 +269,8 @@ container-qemu:
 ![container-qemu](https://raw.githubusercontent.com/sandyyyz/Image-hosting/main/img/container-qemu.png)
 
 ## Q&A
+
+这一节主要记录构建过程中遇到的环境和工具链问题。排查顺序建议为：先确认发行版和包管理体系，再确认源码分支、宿主依赖、构建目录是否复用，最后再看具体编译错误。
 
 Q: 这里有一个关键问题, container通过namespace机制和外界隔离，拥有独立的网络视图，那么此时host-gdb该如何访问container qemu所监听的网络接口呢？
 A: 参见[port_publishing](https://docs.docker.com/engine/network/port-publishing/),docker允许“publish a container's port(s) to the host".为了实现这个功能，需要在docker run时通过-p指定需要publish的端口。

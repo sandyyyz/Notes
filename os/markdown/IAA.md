@@ -2,6 +2,17 @@
 
 > A major advancement in SPR is the introduction of Data Accelerator Complex (DAC) [29]. As illustrated in the left part of Fig. 1, a DAC tile integrates four built-in accelerators—QAT, DLB, DSA, and IAA—along with cache-coherent interconnect, and is dedicated to each SPR SoC chiplet.
 
+## 概览
+
+IAA（In-Memory Analytics Accelerator）面向内存分析场景，将压缩、解压缩、扫描、过滤等数据密集型操作从 CPU core 卸载到片上加速器。QPL 则提供用户态 API，在硬件路径、软件路径和自动回退路径之间做抽象。
+
+| 层次 | 组件 | 作用 |
+| --- | --- | --- |
+| Application | QPL | 提供压缩、解压缩和基础 analytics API |
+| User library | `libaccel-config` | 配置 group、work queue 等 IDXD 资源 |
+| Kernel driver | IDXD | 枚举、初始化并管理 IAA/DSA 设备 |
+| Hardware | IAA | 执行 analytics 和 compression/decompression pipe |
+
 ## QPL
 
 > The Intel® Query Processing Library (Intel® QPL) is an open-source library to provide high-performance query processing operations on Intel CPUs. Intel® QPL is aimed to support capabilities of the new Intel® In-Memory Analytics Accelerator (Intel® IAA) available on Next Generation Intel® Xeon® Scalable processors, codenamed Sapphire Rapids processor, such as very high throughput compression and decompression combined with primitive analytic functions, as well as to provide highly-optimized SW fallback on other Intel CPUs. Intel QPL primarily targets applications such as big-data and in-memory analytic databases.
@@ -29,6 +40,20 @@ IAA 指 Intel In-Memory Analytics Accelerator，是一种集成在部分 Intel X
 ### workflow
 
 > The ENGs fetch descriptors from the WQs, with arbiters ensuring Quality of Service (QoS) and fairness. The ENG forwards the job descriptor to the appropriate processing pipe, as determined by the arbiter, and manages the DMA transfer of data between system memory and either the analytics or compression pipe. The fundamental operational unit in IAA is a group, which can include any combination of WQs and ENGs, up to the maximum capacity supported by the IAA.
+
+简化流程：
+
+```text
+QPL job
+  ↓
+Work Queue descriptor
+  ↓
+Engine fetch
+  ↓
+Analytics / compression pipe
+  ↓
+DMA 写回结果并完成通知
+```
 
 ## Software Architecture
 

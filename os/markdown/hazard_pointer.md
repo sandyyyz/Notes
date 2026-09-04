@@ -1,6 +1,15 @@
 # Hazard Pointer
 
-与 RCU 类似，hazard pointer 用于在对象可能被释放时持有其短期引用。RCU 保护的代码必须禁用抢占，而 hazard pointer 的设计则允许抢占，尽管这种用法未必最优。
+与 RCU 类似，hazard pointer 用于在对象可能被并发释放时建立短期保护。区别在于：RCU 通过 grace period 间接判断旧读者是否退出；hazard pointer 则让读者显式公布“我正在访问哪个对象”，回收者扫描这些公开指针后再决定是否释放。
+
+## 一句话总结
+
+| 机制 | 核心判断 | 主要代价 |
+| --- | --- | --- |
+| refcount | 对象引用计数是否归零 | 共享计数器缓存行争用；无锁获取引用存在竞态 |
+| RCU | 旧读者是否经过 quiescent state | 回收延迟受 grace period 影响 |
+| SRCU | 可睡眠读者是否退出 SRCU 临界区 | 读侧/宽限期成本高于普通 RCU |
+| Hazard Pointer | 是否仍有 hazard slot 指向对象 | 读侧发布与回收侧 slot 扫描复杂 |
 
 ## Linux 内核 Hazard Pointer 提案概述
 

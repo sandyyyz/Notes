@@ -2,6 +2,16 @@
 
 `strace` 是一个利用 Linux `ptrace` 实现的用户态工具，用于拦截并记录一个进程所调用的 `syscall` 和接收到的 `signals`。
 
+## 适用场景
+
+| 场景 | 关注点 |
+| --- | --- |
+| 程序启动失败 | `execve()`、动态库加载、配置文件访问 |
+| 文件权限问题 | `openat()` / `access()` 返回的 errno |
+| 进程卡住 | 阻塞在哪个 syscall，如 `futex()`、`poll()`、`read()` |
+| 网络问题 | `socket()`、`connect()`、`sendto()`、`recvfrom()` |
+| 信号行为 | signal 递送、syscall restart、退出原因 |
+
 ## 输出解释
 
 这里以运行 `strace ls` 的输出为例，解释 `strace` 输出的含义。
@@ -85,4 +95,23 @@ ptrace(PTRACE_ATTACH, pid, NULL, NULL);
 
 ## 常用选项
 
-TODO: 待补充
+| 选项 | 作用 |
+| --- | --- |
+| `-f` | 跟踪 fork/clone 出来的子进程或线程 |
+| `-p <pid>` | attach 到已有进程 |
+| `-o <file>` | 输出到文件 |
+| `-tt` / `-ttt` | 输出更精确的时间戳 |
+| `-T` | 显示每个 syscall 耗时 |
+| `-e trace=<set>` | 只跟踪指定 syscall 集合，如 `file`、`network`、`process` |
+| `-e fault=<syscall>` | 注入 syscall 错误，常用于测试错误路径 |
+| `-s <size>` | 调整字符串打印长度 |
+| `-yy` | 更详细地解析文件描述符路径 |
+
+常见排查命令：
+
+```sh
+strace -f -tt -T -s 256 -o trace.log command args
+strace -p <pid> -f -tt -T
+strace -e trace=file command
+strace -e trace=network command
+```

@@ -2,6 +2,29 @@
 
 > 基于内核版本 v4.14.0
 
+## 结构关系速览
+
+Linux 进程地址空间以 `mm_struct` 为根，VMA 描述连续虚拟地址区间，页表建立虚拟地址到物理页的映射，`struct page` 则承载物理页的内核元数据。
+
+```text
+task_struct
+  ↓
+mm_struct
+  ├─ VMA list / rb tree → vm_area_struct
+  ├─ pgd → p4d → pud → pmd → pte
+  └─ mmu_notifier → HMM/KVM/设备页表同步
+
+pte → pfn → struct page
+```
+
+| 结构 | 作用 |
+| --- | --- |
+| `mm_struct` | 一个进程地址空间的核心描述 |
+| `vm_area_struct` | 一段连续虚拟地址区间及其权限、映射来源 |
+| page table | 虚拟地址到物理页/特殊映射的翻译结构 |
+| `struct page` | 物理页帧的状态、引用计数、LRU/Slab 等元数据 |
+| `mmu_notifier` | CPU 页表变化时通知 KVM、HMM 等外部页表使用者 |
+
 ## `mm_struct`
 
 结构体定义（仅保留关键字段，完整定义见 `include/linux/mm_types.h`）：
@@ -95,6 +118,8 @@ struct vm_area_struct {
 | `anon_vma` / `anon_vma_chain` | 匿名页反向映射的树/链表 |
 
 Q: 为什么同时维护链表和红黑树两种组织方式？
+
+A: 链表适合按地址顺序遍历整个地址空间，红黑树适合按地址快速查找 VMA。旧版本内核同时维护两者，以兼顾遍历和查找效率；新版本中该方向逐步演进为 maple tree 等更适合大规模 VMA 管理的数据结构。
 
 ## `struct page`
 
@@ -209,7 +234,7 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 
 页表层级：`pgd`（page global directory）、`p4d`（4-level）、`pud`（upper）、`pmd`（middle）、`pte`。
 
-由此可见 Linux 采用五级页表，其中 `p4d` 可以折叠，退化为四级页表。
+由此可见 Linux 抽象上支持五级页表，其中 `p4d` 可以在不需要五级页表的架构或配置下折叠，退化为四级页表。
 
 ## mmu_notifier
 

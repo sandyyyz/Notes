@@ -1,5 +1,16 @@
 # chat
 
+这份文件是多次技术讨论的整理稿，内容跨度较大。为了便于后续拆分，可先按主题阅读：
+
+| 章节 | 主题 | 可沉淀为独立笔记 |
+| --- | --- | --- |
+| 1 | HMM、CXL、DMA、cache coherence | HMM/CXL 对照 |
+| 2 | OverlayFS 与 composefs | 容器镜像文件系统 |
+| 3 | Linux、Yocto、RPM、容器构建实践 | kernel build/debug |
+| 4 | HMM 调试和迁移路径 | HMM selftest / migrate_vma |
+
+后续如果继续整理，建议将稳定知识点迁移到对应专题文件中，本文件保留为原始讨论索引。
+
 ## 1
 
 Copilot said:
