@@ -81,6 +81,8 @@ cat trace                                 # 7. 读取结果
 | `snapshot` | 对当前 trace 做快照到备份 buffer |
 | `events/` / `set_event` | 静态 tracepoint 事件目录与使能接口 |
 | `instances/` | 创建多个独立 trace buffer 实例 |
+| `trace_options`/ `options` | `trace_options`控制`trace`的输出，相关选项可以在`options`目录下设置 |
+
 
 ### Filter commands
 
