@@ -898,7 +898,7 @@ TEST_F(hmm, migrate_fault)
 		ret = migrate_vma_setup(&args);
 ```
 
-### migrate_device_finalize
+### (migrate_vma_finalize ->)migrate_device_finalize
 
 ```
 1. 从 src_pfns[] 和 dst_pfns[] 解码源、目标 folio；
@@ -952,8 +952,52 @@ dmirror_migrate_alloc_and_copy() 主要执行四项工作：
 ### migrate_vma_setup
 
 `migrate_vma_setup`:  
-```
-将指定虚拟地址范围中的源页面收集到 src[]，锁定并临时解除 CPU 映射，排除被 pin 或不适合迁移的页面，并为真正可迁移的页面设置 MIGRATE_PFN_MIGRATE，从而为驱动分配目标页和复制数据创造稳定窗口。
+```c
+/*
+将指定虚拟地址范围中的源页面收集到 src[]，锁定并临时解除 CPU 映射，排除被 pin 或不适合迁移的页面，
+并为真正可迁移的页面设置 MIGRATE_PFN_MIGRATE，从而为驱动分配目标页和复制数据创造稳定窗口。
+*/
+
+int migrate_vma_setup(struct migrate_vma *args)
+{
+	long nr_pages = (args->end - args->start) >> PAGE_SHIFT;
+
+	args->start &= PAGE_MASK;
+	args->end &= PAGE_MASK;
+	if (!args->vma || is_vm_hugetlb_page(args->vma) ||
+	    (args->vma->vm_flags & VM_SPECIAL) || vma_is_dax(args->vma))
+		return -EINVAL;
+	if (nr_pages <= 0)
+		return -EINVAL;
+	if (args->start < args->vma->vm_start ||
+	    args->start >= args->vma->vm_end)
+		return -EINVAL;
+	if (args->end <= args->vma->vm_start || args->end > args->vma->vm_end)
+		return -EINVAL;
+	if (!args->src || !args->dst)
+		return -EINVAL;
+	if (args->fault_page && !is_device_private_page(args->fault_page))
+		return -EINVAL;
+
+	memset(args->src, 0, sizeof(*args->src) * nr_pages);
+	args->cpages = 0;
+	args->npages = 0;
+
+	migrate_vma_collect(args);
+
+	if (args->cpages)
+		migrate_vma_unmap(args);
+
+	/*
+	 * At this point pages are locked and unmapped, and thus they have
+	 * stable content and can safely be copied to destination memory that
+	 * is allocated by the drivers.
+	 */
+	return 0;
+
+}
+EXPORT_SYMBOL(migrate_vma_setup);
+
 ```
 
 return 0 doesb't prove all the pages can be migrated:  
@@ -966,6 +1010,55 @@ return 0 doesb't prove all the pages can be migrated:
 ```
 
 so driver should check all the page in src[] later.  
+
+
+#### migrate_vma_collect
+
+
+```c
+
+/*
+ * migrate_vma_collect() - collect pages over a range of virtual addresses
+ * @migrate: migrate struct containing all migration information
+ *
+ * This will walk the CPU page table. For each virtual address backed by a
+ * valid page, it updates the src array and takes a reference on the page, in
+ * order to pin the page until we lock it and unmap it.
+ */
+static void migrate_vma_collect(struct migrate_vma *migrate)
+{
+	struct mmu_notifier_range range;
+
+	/*
+	 * Note that the pgmap_owner is passed to the mmu notifier callback so
+	 * that the registered device driver can skip invalidating device
+	 * private page mappings that won't be migrated.
+	 */
+	mmu_notifier_range_init_owner(&range, MMU_NOTIFY_MIGRATE, 0,
+		migrate->vma->vm_mm, migrate->start, migrate->end,
+		migrate->pgmap_owner);
+	mmu_notifier_invalidate_range_start(&range);
+
+	walk_page_range(migrate->vma->vm_mm, migrate->start, migrate->end,
+			&migrate_vma_walk_ops, migrate);
+
+	mmu_notifier_invalidate_range_end(&range);
+	migrate->end = migrate->start + (migrate->npages << PAGE_SHIFT);
+}
+```
+
+
+#### struct mm_walk_ops migrate_vma_walk_ops
+
+这是传给 `walk_page_range()` 的页表遍历回调集合。
+```c
+
+static const struct mm_walk_ops migrate_vma_walk_ops = {
+	.pmd_entry		= migrate_vma_collect_pmd,
+	.pte_hole		= migrate_vma_collect_hole,
+	.walk_lock		= PGWALK_RDLOCK,
+};
+```
 ### struct migrate_vma
 
 ```c
@@ -1071,45 +1164,6 @@ bounce->addr = buffer->ptr
 
 ```
 
-### migrate_vma_
-
-```c
-struct migrate_vma {
-	struct vm_area_struct	*vma;
-	/*
-	 * Both src and dst array must be big enough for
-	 * (end - start) >> PAGE_SHIFT entries.
-	 *
-	 * The src array must not be modified by the caller after
-	 * migrate_vma_setup(), and must not change the dst array after
-	 * migrate_vma_pages() returns.
-	 */
-	unsigned long		*dst;
-	unsigned long		*src;
-	unsigned long		cpages;
-	unsigned long		npages;
-	unsigned long		start;
-	unsigned long		end;
-
-	/*
-	 * Set to the owner value also stored in page->pgmap->owner for
-	 * migrating out of device private memory. The flags also need to
-	 * be set to MIGRATE_VMA_SELECT_DEVICE_PRIVATE.
-	 * The caller should always set this field when using mmu notifier
-	 * callbacks to avoid device MMU invalidations for device private
-	 * pages that are not being migrated.
-	 */
-	void			*pgmap_owner;
-	unsigned long		flags;
-
-	/*
-	 * Set to vmf->page if this is being called to migrate a page as part of
-	 * a migrate_to_ram() callback.
-	 */
-	struct page		*fault_page;
-};
-
-```
 
 ## TODO
 

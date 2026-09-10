@@ -11,3 +11,7 @@
 - struct page → memory descriptor — 见 [mm.md](./mm.md)
 - MMIO
 - IOMMU
+- NUMA-page-migrate(and frame)
+- mmu-notifier
+- SPKD
+- iouring
