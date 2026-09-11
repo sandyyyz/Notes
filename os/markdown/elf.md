@@ -201,6 +201,12 @@ typedef struct {                 // Elf32_Rela（带显式 addend）
 - 动态相关：`R_386_GLOB_DAT`(S)、`R_386_JMP_SLOT`(S)、`R_386_RELATIVE`(B+A，B 为装载基址) 等。
 
 ## 程序头与程序加载（Elf32_Phdr）
+> An executable or shared object file's program header table is an array of structures, each 
+describing a segment or other information the system needs to prepare the program for 
+execution. An object file segment contains one or more sections. Program headers are 
+meaningful only for executable and shared object files. 
+
+“A segment contains one or more sections”表示一个 Program Header 所描述的文件和内存范围覆盖一个或多个 Section；Section 提供链接语义，Segment把这些 Section按地址、权限和装载要求组织成内核可映射的单位。  
 
 程序头表描述如何创建进程映像，只对可执行和共享文件有意义。
 
@@ -230,7 +236,11 @@ typedef struct {
 
 动态链接在进程初始化或运行时解析符号引用。关键机制：
 
-**程序解释器（Program Interpreter）**：可执行文件经 `PT_INTERP` 段指明解释器路径（Intel/System V 上为 `/usr/lib/libc.so.1`）。`exec` 时系统先装载解释器，把控制交给它，由它（通常是**动态链接器**）再装载程序及依赖的共享对象、完成重定位、最终移交控制给程序。
+**程序解释器（Program Interpreter）**：可执行文件经 `PT_INTERP` 段指明解释器路径（Intel/System V 上为 `/usr/lib/libc.so.1`）。`exec` 时系统先装载解释器，把控制交给它，由它（通常是**动态链接器**）再装载程序及依赖的共享对象、完成重定位、最终移交控制给程序。  
+
+OS有两种方式将控制权转移给interpreter，一是OS向interpreter传递一个fd, interpreter可以通过读该文件，将程序载入内存， 二是OS将程序载入内存，再直接将控制权转移给interpreter.  
+
+interpreter 要么是一个 shared object, 要么是executable file.  
 
 **动态节 (.dynamic)**：`_DYNAMIC` 数组，元素为 `{ d_tag, d_un }`，`DT_NULL` 标记数组结尾。关键标签：
 - `DT_NEEDED`：依赖的共享库名（宽优先遍历解析符号）
