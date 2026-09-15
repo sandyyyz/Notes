@@ -178,6 +178,7 @@ information that describes how to modify their section contents, thus allowing e
 shared object files to hold the right information for a process's program image. Relocation 
 entries are these data.  
 
+
 重定位把"符号引用"与"符号定义"连接起来（如将 `call` 指令的目标改写为函数的真实地址）。
 
 ```c
@@ -192,6 +193,12 @@ typedef struct {                 // Elf32_Rela（带显式 addend）
     Elf32_Sword r_addend;        //  a constant addend used to compute the value to be stored into the relocatable field
 } Elf32_Rela;
 ```
+
+`r_info`:  
+> This member gives both the symbol table index with respect to which the 
+relocation must be made, and the type of relocation to apply. For example, 
+a call instruction's relocation entry would hold the symbol table index of 
+the function being called.
 
 常用宏解析 `r_info`：`ELF32_R_SYM(i)=i>>8`（符号索引），`ELF32_R_TYPE(i)=低8位`（类型）。`Elf32_Rel` 的加数隐含存放在被修改位置中，`Elf32_Rela` 显式给出 `r_addend`。重定位节通过节头的 `sh_link`（关联符号表）与 `sh_info`（被重定位的节）建立联系。
 
