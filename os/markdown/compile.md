@@ -195,3 +195,112 @@ main:
 
 使用`$cc -c`选项将c文件编译至.o文件后停止。  
 
+
+```asm
+main.o:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000000000 <main>:
+   0:	f3 0f 1e fa          	endbr64
+   4:	55                   	push   %rbp
+   5:	48 89 e5             	mov    %rsp,%rbp
+   8:	48 83 ec 10          	sub    $0x10,%rsp
+   c:	c7 45 f8 06 00 00 00 	movl   $0x6,-0x8(%rbp)
+  13:	c7 45 fc 07 00 00 00 	movl   $0x7,-0x4(%rbp)
+  1a:	48 8d 05 00 00 00 00 	lea    0x0(%rip),%rax        # 21 <main+0x21>
+			1d: R_X86_64_PC32	.rodata-0x4
+  21:	48 89 c7             	mov    %rax,%rdi
+  24:	e8 00 00 00 00       	call   29 <main+0x29>
+			25: R_X86_64_PLT32	puts-0x4
+  29:	8b 55 fc             	mov    -0x4(%rbp),%edx
+  2c:	8b 45 f8             	mov    -0x8(%rbp),%eax
+  2f:	89 d6                	mov    %edx,%esi
+  31:	89 c7                	mov    %eax,%edi
+  33:	e8 00 00 00 00       	call   38 <main+0x38>
+			34: R_X86_64_PLT32	add-0x4
+  38:	89 c1                	mov    %eax,%ecx
+  3a:	8b 55 fc             	mov    -0x4(%rbp),%edx
+  3d:	8b 45 f8             	mov    -0x8(%rbp),%eax
+  40:	89 c6                	mov    %eax,%esi
+  42:	48 8d 05 00 00 00 00 	lea    0x0(%rip),%rax        # 49 <main+0x49>
+			45: R_X86_64_PC32	.rodata+0x23
+  49:	48 89 c7             	mov    %rax,%rdi
+  4c:	b8 00 00 00 00       	mov    $0x0,%eax
+  51:	e8 00 00 00 00       	call   56 <main+0x56>
+			52: R_X86_64_PLT32	printf-0x4
+  56:	8b 55 fc             	mov    -0x4(%rbp),%edx
+  59:	8b 45 f8             	mov    -0x8(%rbp),%eax
+  5c:	89 d6                	mov    %edx,%esi
+  5e:	89 c7                	mov    %eax,%edi
+  60:	e8 00 00 00 00       	call   65 <main+0x65>
+			61: R_X86_64_PLT32	multiply-0x4
+  65:	89 c1                	mov    %eax,%ecx
+  67:	8b 55 fc             	mov    -0x4(%rbp),%edx
+  6a:	8b 45 f8             	mov    -0x8(%rbp),%eax
+  6d:	89 c6                	mov    %eax,%esi
+  6f:	48 8d 05 00 00 00 00 	lea    0x0(%rip),%rax        # 76 <main+0x76>
+			72: R_X86_64_PC32	.rodata+0x35
+  76:	48 89 c7             	mov    %rax,%rdi
+  79:	b8 00 00 00 00       	mov    $0x0,%eax
+  7e:	e8 00 00 00 00       	call   83 <main+0x83>
+			7f: R_X86_64_PLT32	printf-0x4
+  83:	8b 05 00 00 00 00    	mov    0x0(%rip),%eax        # 89 <main+0x89>
+			85: R_X86_64_PC32	.data-0x4
+  89:	89 c7                	mov    %eax,%edi
+  8b:	e8 00 00 00 00       	call   90 <main+0x90>
+			8c: R_X86_64_PLT32	update_counter-0x4
+  90:	8b 05 00 00 00 00    	mov    0x0(%rip),%eax        # 96 <main+0x96>
+			92: R_X86_64_PC32	global_counter-0x4
+  96:	89 c6                	mov    %eax,%esi
+  98:	48 8d 05 00 00 00 00 	lea    0x0(%rip),%rax        # 9f <main+0x9f>
+			9b: R_X86_64_PC32	.rodata+0x4c
+  9f:	48 89 c7             	mov    %rax,%rdi
+  a2:	b8 00 00 00 00       	mov    $0x0,%eax
+  a7:	e8 00 00 00 00       	call   ac <main+0xac>
+			a8: R_X86_64_PLT32	printf-0x4
+  ac:	8b 05 00 00 00 00    	mov    0x0(%rip),%eax        # b2 <main+0xb2>
+			ae: R_X86_64_PC32	uninitialized_value-0x4
+  b2:	89 c6                	mov    %eax,%esi
+  b4:	48 8d 05 00 00 00 00 	lea    0x0(%rip),%rax        # bb <main+0xbb>
+			b7: R_X86_64_PC32	.rodata+0x61
+  bb:	48 89 c7             	mov    %rax,%rdi
+  be:	b8 00 00 00 00       	mov    $0x0,%eax
+  c3:	e8 00 00 00 00       	call   c8 <main+0xc8>
+			c4: R_X86_64_PLT32	printf-0x4
+  c8:	b8 00 00 00 00       	mov    $0x0,%eax
+  cd:	c9                   	leave
+  ce:	c3                   	ret
+```
+
+有关重定位的部分：  
+
+|  重定位位置 | 类型               | 目标                        | 含义                  |
+| -----: | ---------------- | ------------------------- | ------------------- |
+| `0x1d` | `R_X86_64_PC32`  | `.rodata-0x4`             | 获取第一个字符串地址          |
+| `0x25` | `R_X86_64_PLT32` | `puts-0x4`                | 调用 `puts`           |
+| `0x34` | `R_X86_64_PLT32` | `add-0x4`                 | 调用 `add`            |
+| `0x45` | `R_X86_64_PC32`  | `.rodata+0x23`            | 获取第二个格式字符串          |
+| `0x52` | `R_X86_64_PLT32` | `printf-0x4`              | 调用 `printf`         |
+| `0x61` | `R_X86_64_PLT32` | `multiply-0x4`            | 调用 `multiply`       |
+| `0x72` | `R_X86_64_PC32`  | `.rodata+0x35`            | 获取第三个格式字符串          |
+| `0x7f` | `R_X86_64_PLT32` | `printf-0x4`              | 调用 `printf`         |
+| `0x85` | `R_X86_64_PC32`  | `.data-0x4`               | 读取 `.data` 中的局部对象   |
+| `0x8c` | `R_X86_64_PLT32` | `update_counter-0x4`      | 调用 `update_counter` |
+| `0x92` | `R_X86_64_PC32`  | `global_counter-0x4`      | 读取全局变量              |
+| `0x9b` | `R_X86_64_PC32`  | `.rodata+0x4c`            | 获取格式字符串             |
+| `0xa8` | `R_X86_64_PLT32` | `printf-0x4`              | 调用 `printf`         |
+| `0xae` | `R_X86_64_PC32`  | `uninitialized_value-0x4` | 读取未初始化全局变量          |
+| `0xb7` | `R_X86_64_PC32`  | `.rodata+0x61`            | 获取格式字符串             |
+| `0xc4` | `R_X86_64_PLT32` | `printf-0x4`              | 调用 `printf`         |
+
+这段代码中的重定位可分为三类：  
+
+- 字符串地址重定位：R_X86_64_PC32 .rodata+...
+- 函数调用重定位：R_X86_64_PLT32 function-0x4
+- 全局或静态数据重定位：R_X86_64_PC32 symbol-0x4 或 .data-0x4
+
+它们共同解决的问题是：编译 `main.c` 时，编译器和汇编器还不知道各个节、函数和全局变量在最终可执行文件中的地址，所以将修正工作延迟到链接阶段。  
+其中的 -4 本质上来自 x86-64 RIP 相对寻址以“下一条指令地址”为基准的规则。  
+
