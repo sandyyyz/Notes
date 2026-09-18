@@ -45,7 +45,18 @@ Plug 'madox2/vim-ai'
 call plug#end()
 ```
 
-重新打开 Vim，执行：
+由于我的`~/.vimrc`配置文件已经安装了插件管理插件`VundleVim`,
+
+```vim
+Plugin 'VundleVim/Vundle.vim'
+```
+可以在`~/.vimrc`中加入
+
+```vim
+Plugin 'madox2/vim-ai'
+```
+
+随后重新打开 Vim，执行：
 
 ```vim
 :PlugInstall
