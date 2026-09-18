@@ -665,3 +665,331 @@ elf_x86_64_relocate_section (struct bfd_link_info *info,
 > 是 x86-64 ELF 链接器后端**重定位处理函数的初始化部分**：它首先检查输入 section 是否在之前的 `check_relocs`/`scan_relocs` 阶段已失败（失败则直接返回），然后通过 `elf_x86_hash_table` 取出 x86-64 专用的链接哈希表并验证输入 BFD 格式匹配；接着从哈希表和输入 BFD 中提取后续重定位所需的关键数据——PLT 表项大小、符号表头、全局符号哈希数组、本地符号的 GOT 偏移和 TLS descriptor GOT 表项；再设置 TLS 模块基址；最后初始化重定位遍历指针（`rel`/`wrel` 指向重定位数组起点，`relend` 指向终点）并置初始状态为成功，为接下来逐条处理 section 中的重定位项做准备。
 
 
+### R_X86_64_GOTPCREL
+
+> R_X86_64_GOTPCREL是x86-64 ELF定义的一种重定位类型（值9），语义是：S + A - GOT，即“符号S在GOT（全局偏移表）中的表项地址 + addend - GOT基址”。它用于位置无关代码（PIC）中获取一个符号的运行时地址：编译器无法在链接期知道符号最终地址（可能来自共享库、可被抢占），于是把符号地址存入GOT槽，代码通过GOT间接取地址。GOTPCREL计算的是“GOT槽相对于当前指令指针RIP的位移”，配合RIP相对寻址使用。典型指令：`mov foo@GOTPCREL(%rip), %rax`——把foo的地址（存放在GOT槽中）加载到rax。所属上下文：x86-64 ELF重定位规范（ELF64 ABI）。
+
+### x86_64_elf_howto_table
+
+```c
+/* Since both 32-bit and 64-bit x86-64 encode relocation type in the
+   identical manner, we use ELF32_R_TYPE instead of ELF64_R_TYPE to get
+   relocation type.  We also use ELF_ST_TYPE instead of ELF64_ST_TYPE
+   since they are the same.  */
+
+/* The relocation "howto" table.  Order of fields:
+   type, rightshift, size, bitsize, pc_relative, bitpos, complain_on_overflow,
+   special_function, name, partial_inplace, src_mask, dst_mask, pcrel_offset.  */
+static reloc_howto_type x86_64_elf_howto_table[] =
+{
+  HOWTO(R_X86_64_NONE, 0, 0, 0, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_NONE",	false, 0, 0x00000000,
+	false),
+  HOWTO(R_X86_64_64, 0, 8, 64, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_64", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_PC32, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_PC32", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_GOT32, 0, 4, 32, false, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_GOT32", false, 0, 0xffffffff,
+	false),
+  HOWTO(R_X86_64_PLT32, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_PLT32", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_COPY, 0, 4, 32, false, 0, complain_overflow_bitfield,
+	bfd_elf_generic_reloc, "R_X86_64_COPY", false, 0, 0xffffffff,
+	false),
+  HOWTO(R_X86_64_GLOB_DAT, 0, 8, 64, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_GLOB_DAT", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_JUMP_SLOT, 0, 8, 64, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_JUMP_SLOT", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_RELATIVE, 0, 8, 64, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_RELATIVE", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_GOTPCREL, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_GOTPCREL", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_32, 0, 4, 32, false, 0, complain_overflow_unsigned,
+	bfd_elf_generic_reloc, "R_X86_64_32", false, 0, 0xffffffff,
+	false),
+  HOWTO(R_X86_64_32S, 0, 4, 32, false, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_32S", false, 0, 0xffffffff,
+	false),
+  HOWTO(R_X86_64_16, 0, 2, 16, false, 0, complain_overflow_bitfield,
+	bfd_elf_generic_reloc, "R_X86_64_16", false, 0, 0xffff, false),
+  HOWTO(R_X86_64_PC16, 0, 2, 16, true, 0, complain_overflow_bitfield,
+	bfd_elf_generic_reloc, "R_X86_64_PC16", false, 0, 0xffff, true),
+  HOWTO(R_X86_64_8, 0, 1, 8, false, 0, complain_overflow_bitfield,
+	bfd_elf_generic_reloc, "R_X86_64_8", false, 0, 0xff, false),
+  HOWTO(R_X86_64_PC8, 0, 1, 8, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_PC8", false, 0, 0xff, true),
+  HOWTO(R_X86_64_DTPMOD64, 0, 8, 64, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_DTPMOD64", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_DTPOFF64, 0, 8, 64, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_DTPOFF64", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_TPOFF64, 0, 8, 64, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_TPOFF64", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_TLSGD, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_TLSGD", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_TLSLD, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_TLSLD", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_DTPOFF32, 0, 4, 32, false, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_DTPOFF32", false, 0, 0xffffffff,
+	false),
+  HOWTO(R_X86_64_GOTTPOFF, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_GOTTPOFF", false, 0, 	0xffffffff,
+	true),
+  HOWTO(R_X86_64_TPOFF32, 0, 4, 32, false, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_TPOFF32", false, 0, 0xffffffff,
+	false),
+  HOWTO(R_X86_64_PC64, 0, 8, 64, true, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_PC64", false, 0, MINUS_ONE,
+	true),
+  HOWTO(R_X86_64_GOTOFF64, 0, 8, 64, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_GOTOFF64", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_GOTPC32, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_GOTPC32", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_GOT64, 0, 8, 64, false, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_GOT64", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_GOTPCREL64, 0, 8, 64, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_GOTPCREL64", false, 0, MINUS_ONE,
+	true),
+  HOWTO(R_X86_64_GOTPC64, 0, 8, 64, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_GOTPC64", false, 0, MINUS_ONE,
+	true),
+  HOWTO(R_X86_64_GOTPLT64, 0, 8, 64, false, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_GOTPLT64", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_PLTOFF64, 0, 8, 64, false, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_PLTOFF64", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_SIZE32, 0, 4, 32, false, 0, complain_overflow_unsigned,
+	bfd_elf_generic_reloc, "R_X86_64_SIZE32", false, 0, 0xffffffff,
+	false),
+  HOWTO(R_X86_64_SIZE64, 0, 8, 64, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_SIZE64", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_GOTPC32_TLSDESC, 0, 4, 32, true, 0,
+	complain_overflow_bitfield, bfd_elf_generic_reloc,
+	"R_X86_64_GOTPC32_TLSDESC", false, 0, 0xffffffff, true),
+  HOWTO(R_X86_64_TLSDESC_CALL, 0, 0, 0, false, 0,
+	complain_overflow_dont, bfd_elf_generic_reloc,
+	"R_X86_64_TLSDESC_CALL",
+	false, 0, 0, false),
+  HOWTO(R_X86_64_TLSDESC, 0, 8, 64, false, 0,
+	complain_overflow_dont, bfd_elf_generic_reloc,
+	"R_X86_64_TLSDESC", false, 0, MINUS_ONE, false),
+  HOWTO(R_X86_64_IRELATIVE, 0, 8, 64, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_IRELATIVE", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_RELATIVE64, 0, 8, 64, false, 0, complain_overflow_dont,
+	bfd_elf_generic_reloc, "R_X86_64_RELATIVE64", false, 0, MINUS_ONE,
+	false),
+  HOWTO(R_X86_64_PC32_BND, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_PC32_BND", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_PLT32_BND, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_PLT32_BND", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_GOTPCRELX, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_GOTPCRELX", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_REX_GOTPCRELX, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_REX_GOTPCRELX", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_CODE_4_GOTPCRELX, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_CODE_4_GOTPCRELX", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_CODE_4_GOTTPOFF, 0, 4, 32, true, 0, complain_overflow_signed,
+	bfd_elf_generic_reloc, "R_X86_64_CODE_4_GOTTPOFF", false, 0, 0xffffffff,
+	true),
+  HOWTO(R_X86_64_CODE_4_GOTPC32_TLSDESC, 0, 4, 32, true, 0,
+	complain_overflow_bitfield, bfd_elf_generic_reloc,
+	"R_X86_64_CODE_4_GOTPC32_TLSDESC", false, 0, 0xffffffff, true),
+  HOWTO(R_X86_64_CODE_5_GOTPCRELX, 0, 4, 32, true, 0,
+	complain_overflow_signed, bfd_elf_generic_reloc,
+	"R_X86_64_CODE_5_GOTPCRELX", false, 0, 0xffffffff, true),
+  HOWTO(R_X86_64_CODE_5_GOTTPOFF, 0, 4, 32, true, 0,
+	complain_overflow_signed, bfd_elf_generic_reloc,
+	"R_X86_64_CODE_5_GOTTPOFF", false, 0, 0xffffffff, true),
+  HOWTO(R_X86_64_CODE_5_GOTPC32_TLSDESC, 0, 4, 32, true, 0,
+	complain_overflow_bitfield, bfd_elf_generic_reloc,
+	"R_X86_64_CODE_5_GOTPC32_TLSDESC", false, 0, 0xffffffff, true),
+  HOWTO(R_X86_64_CODE_6_GOTPCRELX, 0, 4, 32, true, 0,
+	complain_overflow_signed, bfd_elf_generic_reloc,
+	"R_X86_64_CODE_6_GOTPCRELX", false, 0, 0xffffffff, true),
+  HOWTO(R_X86_64_CODE_6_GOTTPOFF, 0, 4, 32, true, 0,
+	complain_overflow_signed, bfd_elf_generic_reloc,
+	"R_X86_64_CODE_6_GOTTPOFF", false, 0, 0xffffffff, true),
+  HOWTO(R_X86_64_CODE_6_GOTPC32_TLSDESC, 0, 4, 32, true, 0,
+	complain_overflow_bitfield, bfd_elf_generic_reloc,
+	"R_X86_64_CODE_6_GOTPC32_TLSDESC", false, 0, 0xffffffff, true),
+
+  /* We have a gap in the reloc numbers here.
+     R_X86_64_standard counts the number up to this point, and
+     R_X86_64_vt_offset is the value to subtract from a reloc type of
+     R_X86_64_GNU_VT* to form an index into this table.  */
+#define R_X86_64_standard (R_X86_64_CODE_6_GOTPC32_TLSDESC + 1)
+#define R_X86_64_vt_offset (R_X86_64_GNU_VTINHERIT - R_X86_64_standard)
+
+/* GNU extension to record C++ vtable hierarchy.  */
+  HOWTO (R_X86_64_GNU_VTINHERIT, 0, 8, 0, false, 0, complain_overflow_dont,
+	 NULL, "R_X86_64_GNU_VTINHERIT", false, 0, 0, false),
+
+/* GNU extension to record C++ vtable member usage.  */
+  HOWTO (R_X86_64_GNU_VTENTRY, 0, 8, 0, false, 0, complain_overflow_dont,
+	 _bfd_elf_rel_vtable_reloc_fn, "R_X86_64_GNU_VTENTRY", false, 0, 0,
+	 false),
+
+/* Use complain_overflow_bitfield on R_X86_64_32 for x32.  */
+  HOWTO(R_X86_64_32, 0, 4, 32, false, 0, complain_overflow_bitfield,
+	bfd_elf_generic_reloc, "R_X86_64_32", false, 0, 0xffffffff,
+	false)
+};
+```
+> x86_64_elf_howto_table[]是BFD的x86-64重定位“操作说明”表，每个HOWTO条目描述一种重定位类型的计算方式（字段含义：type类型、rightshift右移、size操作数字节数、bitsize有效位宽、pc_relative是否PC相对、bitpos位偏移、complain_on_overflow溢出检查策略、special_function特殊处理函数、name名称、partial_inplace是否就地部分重定位、src_mask/dst_mask源/目标掩码、pcrel_offset计算时是否减去P）。该表是relocate_section中elf_x86_64_rtype_to_howto的查找依据。所属模块：bfd/elf64-x86-64.c。
+
+数据结构与字段（各类型语义分组）：
+- 空类型：R_X86_64_NONE——无操作，占位。
+- 绝对寻址类：R_X86_64_64（S+A，64位绝对地址）；R_X86_64_32（S+A，32位无符号，超4GB报错）；R_X86_64_32S（S+A，32位有符号）；R_X86_64_16/8（16/8位截断，主要用于跳转表等特殊场景）。
+- PC相对类：R_X86_64_PC32（S+A-P，最常见，对应`call/jmp rel32`及RIP相对寻址）；R_X86_64_PC64/PC16/PC8（不同位宽的PC相对）。
+- GOT相关：R_X86_64_GOT32（GOT内偏移，罕见）；R_X86_64_GOTPCREL（G+A-P，即GOT槽相对RIP的位移，前面已讨论）；R_X86_64_GOTPCRELX/REX_GOTPCRELX/CODE_4/5/6_GOTPCRELX（GOTPCREL的变体，区别在于指令编码形式——是否带REX前缀、操作码长度不同，均提示链接器“此指令可安全改写为直接寻址”，即前面converted_reloc的来源）；R_X86_64_GOTOFF64（S+A-GOT，符号相对GOT基址）；R_X86_64_GOTPC32（GOT+A-P，GOT基址相对RIP）；R_X86_64_GOT64/GOTPCREL64/GOTPC64/GOTPLT64（64位中等代码模型的GOT变体）。
+- PLT相关：R_X86_64_PLT32（L+A-P，PLT入口相对位移，实际按PC32处理，调用外部函数时使用）；R_X86_64_PLTOFF64（PLT入口相对GOT）；带_BND后缀的PC32_BND/PLT32_BND（Intel MPX绑定指令变体，已废弃）。
+- 动态链接器处理类（链接器不计算，写入动态段由ld.so处理）：R_X86_64_COPY（可执行文件引用共享库数据符号时，把数据复制到bss并让共享库重定位指向它）；R_X86_64_GLOB_DAT（GOT槽填符号地址S）；R_X86_64_JUMP_SLOT（.got.plt槽，惰性绑定函数地址）；R_X86_64_RELATIVE（B+A，加载基址加偏移，PIE内部引用）；R_X86_64_IRELATIVE（IFUNC解析器返回的地址，由ld.so调用解析函数填入）。
+- TLS类（线程局部存储，分四种模型）：
+  - General Dynamic：R_X86_64_TLSGD（调用__tls_get_addr的参数，GOT中两槽：DTPMOD模块ID+DTPOFF模块内偏移）；
+  - Local Dynamic：R_X86_64_TLSLD（同上，但针对本模块内多个局部变量）；
+  - Initial Exec：R_X86_64_GOTTPOFF（GOT槽相对RIP，槽内存符号相对TCB的TPOFF）；变体CODE_4/5/6_GOTTPOFF；
+  - Local Exec：R_X86_64_TPOFF64/TPOFF32（符号相对TCB指针%fs的偏移，静态链接最快路径）；
+  - 辅助：R_X86_64_DTPMOD64（模块ID）、R_X86_64_DTPOFF64/DTPOFF32（模块内偏移）；
+  - TLSDESC：R_X86_64_GOTPC32_TLSDESC（TLS描述符地址相对RIP）、R_X86_64_TLSDESC_CALL（标记调用描述符函数的调用点）、R_X86_64_TLSDESC（描述符内容重定位）；变体CODE_4/5/6_GOTPC32_TLSDESC。
+- 大小类：R_X86_64_SIZE32/SIZE64（S+A取符号st_size，用于FORTIFY_SOURCE的__builtin_object_size检查）。
+- GNU vtable扩展：R_X86_64_GNU_VTINHERIT（记录C++对象vtable继承关系）、R_X86_64_GNU_VTENTRY（记录vtable成员使用），用于--gc-sections判断vtable可达性，不产生实际代码重定位——这正是主循环开头直接跳过它们的原因。
+
+### local/global symbol
+
+
+#### 1. Local Symbol（`r_symndx < sh_info`）
+
+**策略：直接、确定性地在当前 object file 内部解析**
+
+- **无符号解析过程**：local symbol 的定义就在本文件内，直接通过数组下标 `local_syms + r_symndx` 和 `local_sections[r_symndx]` 拿到 symbol 和它所在的 section，O(1) 查表，不查全局 hash 表。
+- **值在链接期完全确定**：`_bfd_elf_rela_local_sym` 计算 `sym->st_value + section 的输出地址`，得到最终虚拟地址，relocation 可以**静态完成**，不需要留给动态链接器。
+- **不可能被抢占**：local symbol 不参与符号解析，不会被其他 object 或 shared library 的同名符号覆盖，也不进入 dynamic symbol table，因此没有 interposition、versioning、copy relocation 这些问题。
+
+**唯一的例外：`STT_GNU_IFUNC`**
+
+```c
+if (ELF_ST_TYPE (sym->st_info) == STT_GNU_IFUNC)
+  h = _bfd_x86_get_local_sym_hash (htab, input_bfd, rel, false);
+```
+
+IFUNC 的取值要靠运行时 resolver 函数决定，链接器必须为它生成 PLT entry 和 `R_X86_64_IRELATIVE` relocation。所以即使是 local symbol，也要在 hash 表里建一个“伪 global”的 entry（`elf_x86_link_hash_entry`），把 `st_value` 和 section 记进去，供后续生成 PLT 使用。这是 local symbol 被特殊提升处理的唯一场景。
+
+#### 2. Global Symbol
+
+**策略：先经过符号解析，再根据解析结果决定 relocation 方式**
+
+`RELOC_FOR_GLOBAL_SYMBOL` 宏做的事情远比 local 分支复杂：
+
+1. **查全局 symbol hash 表**：`sym_hashes[r_symndx - sh_info]`，拿到链接器维护的 `h`（含 binding、version、是否被 hidden 处理等状态）。
+2. **符号解析**：该 symbol 可能被
+   - 本文件定义（普通情况）
+   - **其他输入 object 定义**（本文件的定义被覆盖，用 `h->root.u.def` 的值）
+   - **shared library 定义** → 设置 `unresolved_reloc = true`，relocation 不能静态完成，需要生成 dynamic relocation（如 `R_X86_64_GLOB_DAT` / `JUMP_SLOT`），或对数据符号做 copy relocation
+   - **undefined** → 根据 binding 报错或警告（weak symbol 允许为 0）
+   - 所在 section 被 garbage collect / discarded
+3. **考虑运行时抢占**：对 `-shared` 输出中的可抢占 global symbol，即使链接期知道地址，也必须留 dynamic relocation 给动态链接器。
+4. `st_size` 取自解析后的 `h->size`，而不是输入文件的 `sym->st_size`。
+
+
+| | Local | Global |
+|---|---|---|
+| 符号解析 | 无，直接数组索引 | hash 表查找 + 完整解析流程 |
+| relocation 值 | 链接期完全确定 | 取决于解析结果，可能留给动态链接器 |
+| 可被抢占/覆盖 | 否 | 是（shared lib 场景） |
+| dynamic relocation | 不需要（IFUNC 除外） | 可能需要（GLOB_DAT / JUMP_SLOT / copy reloc） |
+| undefined 处理 | 不存在 | 报错或 weak 警告 |
+| 特殊处理 | STT_GNU_IFUNC 需建 local hash entry | versioning、interposition、discard 检查 |
+
+### symbol hashtable
+
+symbol hash table 是**链接器全局符号解析的核心数据结构**。它以符号名为 key，把所有输入文件中的 global symbol 统一管理起来。
+
+#### 1. 符号解析—— 最核心的作用
+
+链接的本质问题是：**同一个名字可能出现在多个输入文件中，最终用哪一个定义？**
+
+```
+a.o:  global foo  (定义)
+b.o:  global foo  (定义)
+c.o:  undefined foo (引用)
+libc.so: global foo (定义)
+```
+
+Hash table 把所有这些 `foo` 归并到**同一个 entry**（`elf_link_hash_entry`），然后按规则决定胜者：
+
+- strong 定义 vs strong 定义 → multiple definition 错误
+- strong 覆盖 weak
+- 可执行文件中的定义覆盖 shared library 中的定义
+- 记录解析结果到 `h->root.u.def.value / section`
+
+没有 hash table，就无法实现跨文件的符号解析——local symbol 只需数组下标，而 global symbol 必须按**名字**匹配。
+
+#### 2. 记录符号的“全局状态”
+
+每个 hash entry 是一个状态机，贯穿整个链接过程：
+
+```c
+struct elf_link_hash_entry {
+  union {
+    struct bfd_hash_root root;
+    struct {
+      bfd *abfd; ...      /* 未解析时的引用信息 */
+    } und;
+    struct {
+      bfd_vma value;      /* 解析后的最终地址 */
+      asection *section;
+    } def;
+  } root;
+  /* 状态标志 */
+  unsigned int def_regular, def_dynamic, ref_regular, ref_dynamic;
+  unsigned int forced_local, dynamic_def, dynamic_weak;
+  ...
+};
+```
+
+这些标志驱动后续决策：
+
+- `def_dynamic && !def_regular` → 符号来自 shared library，relocation 需要 dynamic reloc（即代码中 `unresolved_reloc` 的来源）
+- `ref_dynamic && def_regular` → 生成 `-Bsymbolic` / export 检查
+- `forced_local`（`-Bsymbolic`、version script 中的 `local:`）→ 按 local 方式处理，不做 interposition
+- `non_elf_ref`、`dynamic_weak` → 影响 `--as-needed`、weak undefined 处理
+
+#### 3. 驱动输出文件的生成
+
+Hash table 决定哪些符号进入输出：
+
+- **`.dynsym` / `.symtab` 的内容**：遍历 hash table，按 `def_regular`/`ref_regular` 等标志筛选哪些符号要导出
+- **PLT/GOT 生成**：`h->plt.offset != (bfd_vma) -1` 表示该符号需要 PLT entry；GOT entry 同理
+- **Copy relocation**：可执行文件引用 shared library 中的数据符号时，在 hash entry 上标记后生成 `.bss` 副本
+- **Version 信息**：`h->verinfo` 记录 symbol versioning
+
+#### 4. 支持各种链接选项的检查
+
+- `--no-undefined`：遍历 hash table 检查是否还有 `undefined` 状态的 entry
+- `-u symbol`：强制保留某符号
+- `--warn-common`：检测 COMMON symbol 合并情况
+- Version script / 动态符号列表：按名字匹配 hash entry 设置 visibility
+
