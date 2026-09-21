@@ -172,12 +172,44 @@ typedef struct {
 ![symbol_binding](https://raw.githubusercontent.com/sandyyyz/Image-hosting/main/img/symbol_binding.png)
 其中`STB_LOPROC`和`STB_HIPROC`保留` for processor-specific semantics`
 
+e.g.  
+```
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ readelf -s main.o
+
+Symbol table '.symtab' contains 20 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     1: 0000000000000000     0 FILE    LOCAL  DEFAULT  ABS main.c
+     2: 0000000000000000     0 SECTION LOCAL  DEFAULT    1 .text
+     3: 0000000000000000     0 SECTION LOCAL  DEFAULT    3 .data
+     4: 0000000000000000     4 OBJECT  LOCAL  DEFAULT    3 local_data
+     5: 0000000000000000     0 SECTION LOCAL  DEFAULT    5 .rodata
+     6: 0000000000000000    39 OBJECT  LOCAL  DEFAULT    5 message
+     7: 0000000000000000     0 SECTION LOCAL  DEFAULT    6 .debug_info
+     8: 0000000000000000     0 SECTION LOCAL  DEFAULT    8 .debug_abbrev
+     9: 0000000000000000     0 SECTION LOCAL  DEFAULT   11 .debug_line
+    10: 0000000000000000     0 SECTION LOCAL  DEFAULT   13 .debug_str
+    11: 0000000000000000     0 SECTION LOCAL  DEFAULT   14 .debug_line_str
+    12: 0000000000000000   207 FUNC    GLOBAL DEFAULT    1 main
+    13: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND puts
+    14: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND add
+    15: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND printf
+    16: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND multiply
+    17: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND update_counter
+    18: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND global_counter
+    19: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND uninitialized_value
+
+```
+
+该符号表（.symtab）共20个条目，每条包含编号、Value（符号值/地址，可重定位文件中多为0）、Size（符号大小，如main占207字节、message占39字节）、Type（类型：FUNC函数、OBJECT变量、SECTION节、FILE源文件、NOTYPE未指定）、Bind（绑定属性：LOCAL局部符号仅本文件可见，GLOBAL全局符号可被链接时跨文件引用）、Vis（可见性，均为DEFAULT）、Ndx（所属节索引或特殊值：ABS表示绝对符号不参与重定位，UND表示未定义符号需在其他目标文件或库中解析，数字如1、3、5表示定义在.text、.data、.rodata等节中）以及符号名。其中main是本文件定义的全局函数，local_data和message是局部变量，而puts、add、printf、multiply、global_counter等UND符号是本文件引用但未定义的，它们正是后续链接步骤的关键输入：静态链接器（ld）会在链接时根据GLOBAL/UND符号在其他目标文件的.symtab和全局符号表中查找定义并完成符号解析，若找不到则报“undefined reference”错误；解析成功后，链接器再根据符号所在的节进行存储空间分配，将Value从0修正为实际虚拟地址，并生成可执行文件中合并后的符号表供运行时动态链接器（ld.so）解析libc等共享库中的符号（如puts、printf），从而将符号表、重定位和动态链接三个阶段串联起来。  
+
 ### 重定位table（Relocation table）(SHT_RELA/SHT_REL)
 >  relocatable files must have 
 information that describes how to modify their section contents, thus allowing executable and 
 shared object files to hold the right information for a process's program image. Relocation 
 entries are these data.  
 
+重定位表（relocation table）是 ELF 文件中用于记录“如何修改节内容”以完成符号引用与符号定义之间连接的数据结构，其基本条目为 Elf32_Rel（含 r_offset 和 r_info）或 Elf32_Rela（额外含显式 r_addend）：r_offset 指明重定位作用的位置（在可重定位文件中是节内字节偏移，在可执行文件或共享对象中是虚拟地址），r_info 同时编码了符号表索引（ELF32_R_SYM）和处理器相关的重定位类型（ELF32_R_TYPE），r_addend 则是计算待写入值的常量加数（Elf32_Rel 形式则将加数隐式存储在被修改位置处）。重定位节通过节头的 sh_link 和 sh_info 分别关联其所依赖的符号表和被修改的目标节。就编译流程而言，重定位表是先前步骤（汇编/编译）的产物——汇编器因无法确定跨文件或运行时才能确定的符号地址，而在生成可重定位文件时为每个需要修补的引用生成重定位条目；同时它又是后续步骤（静态链接和动态链接）的输入——链接器根据这些条目，结合符号解析结果，将正确的地址写入目标位置，最终使可执行文件和共享对象在进程镜像中持有正确的信息，保证程序运行时指令（如函数调用）能跳转到正确地址。  
 
 重定位把"符号引用"与"符号定义"连接起来（如将 `call` 指令的目标改写为函数的真实地址）。
 
@@ -206,6 +238,16 @@ the function being called.
 - `R_386_32` = `S + A`
 - `R_386_PC32` = `S + A - P`
 - 动态相关：`R_386_GLOB_DAT`(S)、`R_386_JMP_SLOT`(S)、`R_386_RELATIVE`(B+A，B 为装载基址) 等。
+
+注意，对于`elf64`:  
+
+```c
+
+#define ELF64_R_SYM(i)		((i) >> 32)
+#define ELF64_R_TYPE(i)		((i) & 0xffffffff)
+#define ELF64_R_INFO(s,t)	(((bfd_vma) (s) << 31 << 1) + (bfd_vma) (t))
+
+```
 
 ## 程序头与程序加载（Elf32_Phdr）
 > An executable or shared object file's program header table is an array of structures, each 

@@ -1,4 +1,22 @@
-# *.c -> elf
+# \*.c -> elf
+
+`~/workspace/compiling_lab`下所有文件类型：  
+
+| 文件               | 文件类型         | 生成方式                         | 主要内容与作用                                                                                    |
+| ---------------- | ------------ | ---------------------------- | ------------------------------------------------------------------------------------------ |
+| `main.i`         | 预处理结果，文本文件   | `gcc -E main.c`              | 展开 `#include`、宏定义和条件编译后的 `main.c`。仍是 C 语言代码，通常用于检查头文件展开和宏替换结果。                             |
+| `calc.i`         | 预处理结果，文本文件   | `gcc -E calc.c`              | 展开 `calc.c` 中的头文件、宏和条件编译内容。                                                                |
+| `main.s`         | 汇编代码，文本文件    | `gcc -S main.c`              | `main.c` 编译生成的 x86-64 汇编代码。由于启用了 `-O0 -g`，其中通常还包含较完整的调试信息指令。                               |
+| `calc.s`         | 汇编代码，文本文件    | `gcc -S calc.c`              | `calc.c` 编译生成的 x86-64 汇编代码。                                                                |
+| `main.o`         | ELF 可重定位目标文件 | `gcc -c main.c`              | 包含 `main` 的机器码、数据、符号表、重定位表和调试信息。对 `add`、`multiply`、`global_counter`、`printf` 等符号的引用尚未全部解析。 |
+| `calc.o`         | ELF 可重定位目标文件 | `gcc -c calc.c`              | 包含普通非 PIC 形式的计算函数和全局变量定义，用来构建静态库。                                                          |
+| `calc.pic.o`     | ELF 可重定位目标文件 | `gcc -fPIC -c calc.c`        | 包含位置无关代码，供构建共享库使用。与 `calc.o` 的主要区别是外部符号访问和地址计算方式适用于共享对象的任意加载地址。                            |
+| `libcalc.a`      | 静态归档库        | `ar rcs libcalc.a calc.o`    | 静态库，本质上是包含 `calc.o` 的归档文件。静态链接时，链接器按未解析符号从中提取需要的目标文件成员。                                    |
+| `libcalc.so`     | ELF 共享对象     | `gcc -shared ... calc.pic.o` | 动态共享库，包含 `calc` 模块的代码和数据。其 SONAME 被设置为 `libcalc.so`，运行时由动态链接器加载。                           |
+| `elf_static`     | ELF 可执行文件    | `gcc main.o -L. -lcalc`      | 使用 `libcalc.a` 提供 `calc` 相关符号的可执行文件。`calc.o` 的代码被复制进入该文件，但 libc 默认仍是动态链接的。                 |
+| `elf_static.map` | 链接映射文件，文本文件  | 链接 `elf_static` 时由 `ld` 生成   | 记录静态库成员提取原因、输入 section 合并过程、符号地址、输出 section 布局、丢弃 section、PLT/GOT 和动态库依赖等链接结果。             |
+| `elf_shared`     | ELF 可执行文件    | `gcc main.o -L. -lcalc`      | 使用 `libcalc.so` 的动态链接可执行文件。不会复制 `calc` 的主体代码，而是记录对 `libcalc.so` 的运行时依赖。                    |
+| `elf_shared.map` | 链接映射文件，文本文件  | 链接 `elf_shared` 时由 `ld` 生成   | 记录动态链接版本的 section 布局、符号解析、动态依赖、PLT/GOT 及动态重定位结构。                                           |
 
 ## preprocessing
 
@@ -15,6 +33,24 @@
 - 过长的空行将被丢弃
 - 添加`inemarkers`, 格式为`# linenum filename flags`
 
+
+
+| 项目 | 说明 |
+|---|---|
+| 名称 | linemarkers（行标记） |
+| 插入位置 | 按需插入到输出中（但绝不会出现在字符串或字符常量内） |
+| 含义 | 表示下一行内容来自文件 filename 的第 linenum 行 |
+| filename 限制 | 不含任何非打印字符；如有则替换为八进制转义序列 |
+| flags数量 | 文件名后跟零个或多个标志 |
+| flags取值 | ‘1’、‘2’、‘3’、‘4’ |
+| 多flags分隔 | 用空格分隔 |
+
+| flags | 含义 |
+|---|---|
+| ‘1’ | 表示一个新文件的开始 |
+| ‘2’ | 表示返回到某个文件（在包含其他文件之后） |
+| ‘3’ | 表示后续文本来自系统头文件，应抑制某些警告 |
+| ‘4’ | 表示后续文本应被视为包裹在隐式的 extern "C" 块中 |
 
 输出格式如下:  
 
@@ -191,9 +227,35 @@ main:
 | 指令宽度后缀            | `b`、`w`、`l`、`q`                        | AT\&T 语法中分别表示 8、16、32、64 位操作数                                 | 决定机器指令的操作数宽度                                                                          |
 | 源和目标顺序            | `movl %eax, %esi`                      | AT\&T 语法采用“源操作数在前，目标操作数在后”                                    | 与 Intel 语法的常见书写顺序相反                                                                   |
 
-## assemble
+## assembling
 
 使用`$cc -c`选项将c文件编译至.o文件后停止。  
+
+`main.o`的`elf-header`  
+
+```sh
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ readelf -h main.o
+ELF Header:
+  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              REL (Relocatable file)
+  Machine:                           Advanced Micro Devices X86-64
+  Version:                           0x1
+  Entry point address:               0x0
+  Start of program headers:          0 (bytes into file)
+  Start of section headers:          3832 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               64 (bytes)
+  Size of program headers:           0 (bytes)
+  Number of program headers:         0
+  Size of section headers:           64 (bytes)
+  Number of section headers:         23
+  Section header string table index: 22
+```
 
 
 ```asm
@@ -303,4 +365,769 @@ Disassembly of section .text:
 
 它们共同解决的问题是：编译 `main.c` 时，编译器和汇编器还不知道各个节、函数和全局变量在最终可执行文件中的地址，所以将修正工作延迟到链接阶段。  
 其中的 -4 本质上来自 x86-64 RIP 相对寻址以“下一条指令地址”为基准的规则。  
+
+## symbol table
+
+对于`main.o`  
+
+该文件的符号表格式：  
+
+```
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ readelf -s main.o
+
+Symbol table '.symtab' contains 20 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     1: 0000000000000000     0 FILE    LOCAL  DEFAULT  ABS main.c
+     2: 0000000000000000     0 SECTION LOCAL  DEFAULT    1 .text
+     3: 0000000000000000     0 SECTION LOCAL  DEFAULT    3 .data
+     4: 0000000000000000     4 OBJECT  LOCAL  DEFAULT    3 local_data
+     5: 0000000000000000     0 SECTION LOCAL  DEFAULT    5 .rodata
+     6: 0000000000000000    39 OBJECT  LOCAL  DEFAULT    5 message
+     7: 0000000000000000     0 SECTION LOCAL  DEFAULT    6 .debug_info
+     8: 0000000000000000     0 SECTION LOCAL  DEFAULT    8 .debug_abbrev
+     9: 0000000000000000     0 SECTION LOCAL  DEFAULT   11 .debug_line
+    10: 0000000000000000     0 SECTION LOCAL  DEFAULT   13 .debug_str
+    11: 0000000000000000     0 SECTION LOCAL  DEFAULT   14 .debug_line_str
+    12: 0000000000000000   207 FUNC    GLOBAL DEFAULT    1 main
+    13: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND puts
+    14: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND add
+    15: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND printf
+    16: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND multiply
+    17: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND update_counter
+    18: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND global_counter
+    19: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND uninitialized_value
+
+```
+
+该符号表（.symtab）共20个条目，每条包含编号、Value（符号值/地址，可重定位文件中多为0）、Size（符号大小，如main占207字节、message占39字节）、Type（类型：FUNC函数、OBJECT变量、SECTION节、FILE源文件、NOTYPE未指定）、Bind（绑定属性：LOCAL局部符号仅本文件可见，GLOBAL全局符号可被链接时跨文件引用）、Vis（可见性，均为DEFAULT）、Ndx（所属节索引或特殊值：ABS表示绝对符号不参与重定位，UND表示未定义符号需在其他目标文件或库中解析，数字如1、3、5表示定义在.text、.data、.rodata等节中）以及符号名。其中main是本文件定义的全局函数，local_data和message是局部变量，而puts、add、printf、multiply、global_counter等UND符号是本文件引用但未定义的，它们正是后续链接步骤的关键输入：静态链接器（ld）会在链接时根据GLOBAL/UND符号在其他目标文件的.symtab和全局符号表中查找定义并完成符号解析，若找不到则报“undefined reference”错误；解析成功后，链接器再根据符号所在的节进行存储空间分配，将Value从0修正为实际虚拟地址，并生成可执行文件中合并后的符号表供运行时动态链接器（ld.so）解析libc等共享库中的符号（如puts、printf），从而将符号表、重定位和动态链接三个阶段串联起来。  
+
+这里的Ndx标注当前符号所属的section，可以从section header table找到对应：  
+
+```sh
+
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ readelf -S main.o
+There are 23 section headers, starting at offset 0xef8:
+
+Section Headers:
+  [Nr] Name              Type             Address           Offset
+       Size              EntSize          Flags  Link  Info  Align
+  [ 0]                   NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [ 1] .text             PROGBITS         0000000000000000  00000040
+       00000000000000cf  0000000000000000  AX       0     0     1
+  [ 2] .rela.text        RELA             0000000000000000  00000958
+       0000000000000180  0000000000000018   I      20     1     8
+  [ 3] .data             PROGBITS         0000000000000000  00000110
+       0000000000000004  0000000000000000  WA       0     0     4
+  [ 4] .bss              NOBITS           0000000000000000  00000114
+       0000000000000000  0000000000000000  WA       0     0     1
+  [ 5] .rodata           PROGBITS         0000000000000000  00000120
+       000000000000007f  0000000000000000   A       0     0     32
+  [ 6] .debug_info       PROGBITS         0000000000000000  0000019f
+       0000000000000161  0000000000000000           0     0     1
+  [ 7] .rela.debug_info  RELA             0000000000000000  00000ad8
+       0000000000000258  0000000000000018   I      20     6     8
+  [ 8] .debug_abbrev     PROGBITS         0000000000000000  00000300
+       0000000000000107  0000000000000000           0     0     1
+  [ 9] .debug_aranges    PROGBITS         0000000000000000  00000407
+       0000000000000030  0000000000000000           0     0     1
+  [10] .rela.debug_[...] RELA             0000000000000000  00000d30
+       0000000000000030  0000000000000018   I      20     9     8
+  [11] .debug_line       PROGBITS         0000000000000000  00000437
+       000000000000007f  0000000000000000           0     0     1
+  [12] .rela.debug_line  RELA             0000000000000000  00000d60
+       00000000000000a8  0000000000000018   I      20    11     8
+  [13] .debug_str        PROGBITS         0000000000000000  000004b6
+       0000000000000159  0000000000000001  MS       0     0     1
+  [14] .debug_line_str   PROGBITS         0000000000000000  0000060f
+       0000000000000071  0000000000000001  MS       0     0     1
+  [15] .comment          PROGBITS         0000000000000000  00000680
+       000000000000002e  0000000000000001  MS       0     0     1
+  [16] .note.GNU-stack   PROGBITS         0000000000000000  000006ae
+       0000000000000000  0000000000000000           0     0     1
+  [17] .note.gnu.pr[...] NOTE             0000000000000000  000006b0
+       0000000000000020  0000000000000000   A       0     0     8
+  [18] .eh_frame         PROGBITS         0000000000000000  000006d0
+       0000000000000038  0000000000000000   A       0     0     8
+  [19] .rela.eh_frame    RELA             0000000000000000  00000e08
+       0000000000000018  0000000000000018   I      20    18     8
+  [20] .symtab           SYMTAB           0000000000000000  00000708
+       00000000000001e0  0000000000000018          21    12     8
+  [21] .strtab           STRTAB           0000000000000000  000008e8
+       000000000000006b  0000000000000000           0     0     1
+  [22] .shstrtab         STRTAB           0000000000000000  00000e20
+       00000000000000d3  0000000000000000           0     0     1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), l (large), p (processor specific
+```
+
+可以看到，有些*符号*已经定义，而有些的还未定义，需要在链接阶段寻找定义：  
+
+```sh
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ nm -C main.o
+                 U add
+                 U global_counter
+0000000000000000 d local_data
+0000000000000000 T main
+0000000000000000 r message
+                 U multiply
+                 U printf
+                 U puts
+                 U uninitialized_value
+                 U update_counter
+
+	• U：未定义符号，需要链接器寻找定义
+	• T：定义在代码节.text
+	• D：定义在已初始化数据节
+	• B：定义在 .bss
+小写字母通常表示局部符号(.r maybe .rodata?)
+and .d .data?
+
+```
+
+对于在`main.o`中无法找到定义的符号，可以在`calc.o`中找到  
+
+```
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ nm -C calc.o
+0000000000000000 T add
+0000000000000000 D global_counter
+0000000000000004 d internal_state
+0000000000000000 r module_name
+0000000000000018 T multiply
+0000000000000000 B uninitialized_value
+000000000000002f T update_counter
+```
+
+## linking
+
+`main.o`的`relocation table`  
+
+```sh
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ readelf -r main.o
+
+Relocation section '.rela.text' at offset 0x958 contains 16 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+00000000001d  000500000002 R_X86_64_PC32     0000000000000000 .rodata - 4
+000000000025  000d00000004 R_X86_64_PLT32    0000000000000000 puts - 4
+000000000034  000e00000004 R_X86_64_PLT32    0000000000000000 add - 4
+000000000045  000500000002 R_X86_64_PC32     0000000000000000 .rodata + 23
+000000000052  000f00000004 R_X86_64_PLT32    0000000000000000 printf - 4
+000000000061  001000000004 R_X86_64_PLT32    0000000000000000 multiply - 4
+000000000072  000500000002 R_X86_64_PC32     0000000000000000 .rodata + 35
+00000000007f  000f00000004 R_X86_64_PLT32    0000000000000000 printf - 4
+000000000085  000300000002 R_X86_64_PC32     0000000000000000 .data - 4
+00000000008c  001100000004 R_X86_64_PLT32    0000000000000000 update_counter - 4
+000000000092  001200000002 R_X86_64_PC32     0000000000000000 global_counter - 4
+00000000009b  000500000002 R_X86_64_PC32     0000000000000000 .rodata + 4c
+0000000000a8  000f00000004 R_X86_64_PLT32    0000000000000000 printf - 4
+0000000000ae  001300000002 R_X86_64_PC32     0000000000000000 uninitialized_value - 4
+0000000000b7  000500000002 R_X86_64_PC32     0000000000000000 .rodata + 61
+0000000000c4  000f00000004 R_X86_64_PLT32    0000000000000000 printf - 4
+
+Relocation section '.rela.debug_info' at offset 0xad8 contains 25 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000000008  00080000000a R_X86_64_32       0000000000000000 .debug_abbrev + 0
+00000000000d  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 76
+000000000012  000b0000000a R_X86_64_32       0000000000000000 .debug_line_str + 0
+000000000016  000b0000000a R_X86_64_32       0000000000000000 .debug_line_str + 7
+00000000001a  000200000001 R_X86_64_64       0000000000000000 .text + 0
+00000000002a  00090000000a R_X86_64_32       0000000000000000 .debug_line + 0
+000000000031  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 29
+000000000038  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 8
+00000000003f  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 63
+000000000046  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 129
+00000000004d  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 14d
+000000000054  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 143
+000000000062  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 111
+000000000069  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 4f
+000000000073  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 11a
+00000000007d  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 15
+000000000087  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 44
+000000000093  000300000001 R_X86_64_64       0000000000000000 .data + 0
+0000000000b1  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 0
+0000000000bd  000500000001 R_X86_64_64       0000000000000000 .rodata + 0
+0000000000c6  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 54
+0000000000d8  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 3b
+0000000000f3  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 13c
+00000000012c  000a0000000a R_X86_64_32       0000000000000000 .debug_str + 71
+000000000137  000200000001 R_X86_64_64       0000000000000000 .text + 0
+
+Relocation section '.rela.debug_aranges' at offset 0xd30 contains 2 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000000006  00070000000a R_X86_64_32       0000000000000000 .debug_info + 0
+000000000010  000200000001 R_X86_64_64       0000000000000000 .text + 0
+
+Relocation section '.rela.debug_line' at offset 0xd60 contains 7 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000000022  000b0000000a R_X86_64_32       0000000000000000 .debug_line_str + 27
+000000000026  000b0000000a R_X86_64_32       0000000000000000 .debug_line_str + 47
+000000000030  000b0000000a R_X86_64_32       0000000000000000 .debug_line_str + 54
+000000000035  000b0000000a R_X86_64_32       0000000000000000 .debug_line_str + 5b
+00000000003a  000b0000000a R_X86_64_32       0000000000000000 .debug_line_str + 62
+00000000003f  000b0000000a R_X86_64_32       0000000000000000 .debug_line_str + 69
+000000000049  000200000001 R_X86_64_64       0000000000000000 .text + 0
+
+Relocation section '.rela.eh_frame' at offset 0xe08 contains 1 entry:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000000020  000200000002 R_X86_64_PC32     0000000000000000 .text + 0
+```
+
+对于这样一个`relocation entry`  
+
+```
+
+Relocation section '.rela.text' at offset 0x958 contains 16 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+  000000000034  000e00000004 R_X86_64_PLT32    0000000000000000 add - 4
+
+```
+
+其关键字段值：  
+
+```
+r_offset = 0x34
+r_info   = 0x0000000e00000004
+r_addend = -4
+```
+
+其 `section header`中`sh_name`字段， 如`.rela.text`说明该`relocation table`负责修改哪个section  
+
+```
+.rela.text          → 修补 .text
+.rela.debug_info    → 修补 .debug_info
+.rela.debug_aranges → 修补 .debug_aranges
+.rela.debug_line    → 修补 .debug_line
+.rela.eh_frame      → 修补 .eh_frame
+```
+`.rela` 中的 `rela` 表明它使用显式加数，即 `r_addend` 单独保存在重定位项中；与之相对，`.rel` 通常将加数隐含在需要修补的字段中。  
+
+`r_offset`在`relocatable file`中表示`应当修改对应section中的r_offset`处, 注意，不是指令开始处，而是需要回填地址的起始位置  
+
+`r_info`指代 `type=0x4`, `symidx=0xe`, 即`add`  
+
+```
+S：目标符号最终解析得到的地址或符号值, 即symidx指代的符号表中的表项(所属的section).
+A：重定位项中记录的 Addend
+P：被重定位字段本身的最终地址
+L：目标符号对应的 PLT 表项地址
+```
+
+e.g.  
+
+```
+
+R_X86_64_64：写入 64 位绝对值
+result = S + A
+链接器把完整结果写入目标位置的 8 字节字段。这里不需要 P，因为写入的是目标本身的绝对地址，而不是目标相对于当前位置的距离。
+
+R_X86_64_32：写入 32 位绝对值
+result = S + A
+区别在于链接器只向目标位置写入 4 字节，并检查该结果是否可以通过零扩展还原成原始 64 位结果。
+因此合法范围：0 <= result <= 0xffffffff
+
+R_X86_64_PC32：写入 32 位 PC 相对位移
+result = S + A - P (由于是相对当前pc的地址，所以-p)
+链接器向目标位置写入一个 4 字节有符号值。该字段通常不是目标地址，而是从当前指令附近到目标地址的距离。它用于 x86-64 的 RIP-relative 数据访问、分支，或其他 PC-relative 引用。
+
+R_X86_64_PLT32：写入到函数或 PLT 表项的相对位移
+R_X86_64_PLT32 主要用于直接函数调用
+result = L + A - P
+其中 L 是目标函数对应的 PLT 表项地址。它与 R_X86_64_PC32 的计算形式相似，区别在于目标原则上不是函数实体地址 S，而是该符号的 Procedure Linkage Table 表项地址 L。
+
+
+PLT/GOT 是每个 ELF 可执行文件或共享库自身的链接基础设施。静态链接器负责规划、创建和初始化其静态结构；动态链接器负责在加载期或首次调用时解析动态符号，并更新 GOT 中需要运行时确定的地址；CPU 只负责执行 PLT 指令并读取 GOT 槽位。
+
+```
+
+这里可以看到，计算重定位地址需要考虑很多方面：
+1. 机器架构
+2. 机器位长
+3. 相对寻址还是绝对寻址
+4. 是否为函数调用
+
+这些在`type`字段规定的类型中都有体现  
+
+```
+add
+multiply
+update_counter
+printf
+global_counter
+uninitialized_value
+
+可以看到main.o 中的指令尚未包含这些符号的最终虚拟地址，因此汇编器生成重定位项。
+链接器读取重定位项后，将符号绑定到定义，并修正相应指令或数据。ELF 重定位项描述了待修正位置、关联符号和体系结构相关的重定位类型。
+```
+
+## static(?) linking
+
+`linker`的三项核心工作：  
+
+选择输入目标文件、合并输入 section、解析并重定位符号引用  
+
+链接过程：  
+
+1. 链接器读取 main.o、启动文件和库
+2. 根据未定义符号，从 libcalc.a 中按需提取 calc.o
+3. 把各输入文件中的同类 section 合并
+4. 为输出 section 和符号分配最终链接地址
+5. 根据 relocation entry 修正 main.o 中的符号引用
+
+### `.map`
+
+对于`.map`文件：  
+
+| Map 文件区域                        | 回答的问题                  |
+| ------------------------------- | ---------------------- |
+| `Archive member included...`    | 为什么从静态库中提取某个 `.o`      |
+| `As-needed library included...` | 为什么保留某个动态库依赖           |
+| `Discarded input sections`      | 哪些输入 section 没进入最终输出   |
+| `Memory Configuration`          | 链接脚本允许使用哪些地址区域         |
+| `LOAD`                          | 链接器处理了哪些输入文件和库         |
+| `Linker script and memory map`  | 输入 section 如何合并、最终放到哪里 |
+| 符号地址行                           | 函数和变量最终位于什么链接地址        |
+| `OUTPUT(...)`                   | 最终输出文件名和 ELF 格式        |
+
+
+#### include static-library
+
+```
+Archive member included to satisfy reference by file (symbol)
+
+./libcalc.a(calc.o)           main.o (global_counter)
+```
+
+链接器处理 `main.o` 时，发现其中引用了未定义符号 `global_counter`；随后扫描 `libcalc.a` 的符号索引，发现该符号由成员 `calc.o` 定义，于是从静态库中提取整个 `calc.o` 加入当前链接。  
+静态库通常按目标文件成员粒度提取，即只要需要某个成员中的一个符号，该成员整体就会参与链接；被提取成员中的其他未定义符号还可能进一步触发更多库成员被提取  
+
+#### include dynamic-library
+
+```
+As-needed library included to satisfy reference by file (symbol)
+ 
+libc.so.6 main.o (puts@@GLIBC_2.2.5)
+```
+
+`main.o` 时发现其中存在未定义符号 `puts@@GLIBC_2.2.5`，而 `GCC` 在默认链接过程中会自动加入 C 标准库 `-lc`；由于当前未使用 `-static` 或 `-Wl,-Bstatic`，链接器按默认动态模式选择了提供该符号的 `libc.so.6`，并用其动态符号定义满足 `main.o` 的引用。  
+启用 `--as-needed` 后，只有实际解决了未定义符号的共享库才会被写入最终 `ELF` 的 `DT_NEEDED`，因此该行表示：`main.o` 对 `puts` 的引用使 `libc.so.6` 成为必要的运行时依赖；其中 `@@GLIBC_2.2.5` 表示链接的是 `puts` 的默认 `GLIBC_2.2.5` 符号版本。  
+
+
+#### discard input sections
+
+```
+Discarded input sections
+
+ .note.GNU-stack
+                0x0000000000000000        0x0 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/Scrt1.o
+ .note.gnu.property
+                0x0000000000000000       0x20 /usr/lib/gcc/x86_64-linux-gnu/13/../../../x86_64-linux-gnu/crti.o
+
+```
+这些是被丢弃的`section`，输出格式为：  
+输入 `section` 名 地址 大小 来源文件  
+
+`Discarded input sections` 中的所有条目都没有原样进入最终输出。这里出现的地址 0 不表示它被放在最终映像的地址 0，而是因为它已经被丢弃，没有获得有效的输出地址。  
+
+#### memory configuration
+
+```
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+*default*        0x0000000000000000 0xffffffffffffffff
+
+```
+
+这表示当前链接没有自定义 `MEMORY` 区域，所有段都可以放在默认的整个地址空间中。实际代码、数据放在哪里，由后面的 `SECTIONS` 命令决定。
+
+
+#### linker script and memory map
+
+```text
+Linker script and memory map
+LOAD ...
+```
+
+`LOAD` 表示链接器在链接过程中读取了某个输入文件。注意：这里的“LOAD”不是运行时加载，而是链接时把该文件作为输入参与链接。对于动态库，最终可执行文件通常不会复制其代码，而是记录依赖关系。
+
+涉及的文件：  
+
+| 文件 | 作用 |
+|---|---|
+| `Scrt1.o` | C 运行时启动文件，用于 PIE 可执行文件，提供 `_start`，最终调用 `__libc_start_main` |
+| `crti.o` | 提供 `.init` 和 `.fini` 节的开头部分 |
+| `crtbeginS.o` | GCC 提供的构造函数/析构函数注册开始，`S` 表示用于 PIE/共享库 |
+| `main.o` | 用户编译出的主目标文件 |
+| `./libcalc.a` | 用户自己的静态库，例如包含计算相关函数 |
+| `libgcc.a` | GCC 静态运行时库，提供底层算术、异常处理等支持 |
+| `libgcc_s.so` | GCC 共享运行时库的链接脚本，会展开成组 |
+| `libc.so` | glibc 的链接脚本，会展开成组 |
+| `libc.so.6` | 真正的动态 C 库 |
+| `libc_nonshared.a` | 必须静态链接进可执行文件的 libc 部分 |
+| `ld-linux-x86-64.so.2` | 动态链接器/加载器 |
+| `crtendS.o` | GCC 构造函数/析构函数注册结束 |
+| `crtn.o` | 提供 `.init` 和 `.fini` 节的结尾部分 |
+
+#### group
+
+```text
+START GROUP
+LOAD /usr/lib/gcc/.../libgcc_s.so.1
+LOAD /usr/lib/gcc/.../libgcc.a
+END GROUP
+```
+
+`START GROUP` 和 `END GROUP` 对应链接器脚本中的 `GROUP(...)` 命令。
+
+它的作用是：组内的库会被反复扫描，直到没有新的未定义符号被解析。这主要用于解决静态库之间的循环依赖。
+
+#### merge sections
+
+format:  
+
+```
+```text
+.interp         0x0000000000000318       0x1c     ← 输出节名、起始地址、大小
+ *(.interp)                                      ← 通配符：收集所有输入文件的 .interp 节
+ .interp        0x0000000000000318       0x1c Scrt1.o  ← 实际来自哪个文件、放在哪、多大
+                0x0000000000001080                _start   ← 定义在该地址的符号
+ *fill*         0x00000000000010a6        0xa            ← 对齐填充字节
+                [!provide]  PROVIDE (...)              ← 弱定义符号（仅被引用时才生成）
+```
+
+
+##### 1. sections after program header(0x318 起)
+
+```
+PROVIDE (__executable_start = SEGMENT_START ("text-segment", 0x0))
+0x0000000000000318                . = (SEGMENT_START ("text-segment", 0x0) + SIZEOF_HEADERS)
+```
+
+- `PROVIDE` 定义了一个符号 `__executable_start`，其值为 `text-segment` 段的起始地址，默认是 `0x0`。这个符号通常表示程序可执行代码段的起始地址。
+- `SEGMENT_START("text-segment", 0x0)` 是链接器脚本函数，返回 `-Ttext-segment=...` 指定的地址，若未指定则用默认值 `0x0`。
+- `SIZEOF_HEADERS` 是 ELF 文件头（ELF header + program header table）的总大小。
+- 位置计数器 `.` 被设置为 `0x0 + SIZEOF_HEADERS`，这里结果是 `0x318`，说明程序头大小是 `0x318` 字节。因此第一个输出节从 `0x318` 开始。
+
+```text
+. = (SEGMENT_START("text-segment", 0x0) + SIZEOF_HEADERS)
+```
+
+代码段从 ELF 头之后开始。这一段都是**动态链接所需的元数据节**：
+
+| 节 | 作用 |
+|---|---|
+| `.interp` | 动态链接器路径字符串，如 `/lib64/ld-linux-x86-64.so.2` |
+| `.note.gnu.property` | GNU 属性(如 IBT/CET 安全特性标志) |
+| `.note.gnu.build-id` | 构建唯一 ID(`readelf -n` 可见) |
+| `.note.ABI-tag` | ABI 版本标记 |
+| `.gnu.hash` | 符号哈希表(快速查找动态符号) |
+| `.dynsym` / `.dynstr` | 动态符号表及其字符串表 |
+| `.gnu.version` / `_d` / `_r` | 符号版本信息 |
+| `.rela.dyn` | 运行时重定位表(数据/GOT 重定位) |
+| `.rela.plt` | PLT 函数的重定位表(懒绑定信息) |
+
+##### 2. 代码段(0x1000 起，页对齐)
+
+```text
+. = ALIGN(CONSTANT(MAXPAGESIZE))   ← 对齐到 4096(0x1000)
+```
+
+- **`.init` (0x1000)**: 进程初始化代码，由 `crti.o` 的开头 + `crtn.o` 的结尾拼成，入口符号 `_init`。
+- **`.plt` (0x1020, 大小 0x30)**: 过程链接表，动态函数调用的跳转桩。
+- **`.plt.got` (0x1050, 大小 0x10)**: 针对 GOT 的 PLT 条目，包含 `__cxa_finalize@@GLIBC_2.2.5`（退出时清理，用于 C++ 析构函数的最终清理）。
+- **`.plt.sec` (0x1060, 大小 0x20)**: 安全 PLT 节（与 `.plt` 配合，用于 IBT 等安全特性），包含 `puts@@GLIBC_2.2.5` 和 `printf@@GLIBC_2.2.5` 的跳转桩。
+- **`.text` (0x1080, 0x225)**:主代码。注意各文件的贡献：
+
+```text
+.text  0x1080  0x26   Scrt1.o      → _start(真正的进程入口)
+.text  0x10b0  0xb9   crtbeginS.o
+.text  0x1169  0xcf   main.o       → main
+.text  0x1238  0x6d   libcalc.a(calc.o) → add, multiply, update_counter
+```
+
+**这说明 `libcalc.a` 中的 `calc.o` 被从静态库中提取并链入了最终可执行文件**(因为 `main` 引用了它的符号)。
+
+- **`.fini` (0x12a8)**:进程退出代码，入口符号 `_fini`。
+- 随后定义了 `__etext`/`_etext`/`etext`(代码段结束地址)。
+
+##### 3. 只读数据段(0x2000 起，新的一页)
+
+- **`.rodata`**:只读数据。`_IO_stdin_used`(glibc 检测 stdin 是否被使用的标志)、`main.o` 的字符串常量(printf/puts 的格式串)、`calc.o` 的只读数据。
+- **`.eh_frame_hdr` / `.eh_frame`**:C++ 异常展开/栈回溯信息。注意 `0x2c (size before relaxing)` —— 链接器做了 **DWARF CFI relaxation**,压缩了帧描述，所以最终大小比输入时小。
+- `.sframe`、`.gcc_except_table` 等为空(本程序无 C++ 异常)。
+
+##### 4. 数据段(0x3db0 起)
+
+```text
+. = DATA_SEGMENT_ALIGN(MAXPAGESIZE, COMMONPAGESIZE)
+```
+
+- **`.init_array` / `.fini_array`**:构造/析构函数指针表，由 `crtbeginS.o` 提供边界标记(`__init_array_start/end`)。运行时 `__libc_csu_init` 会遍历它们。
+- **`.dynamic` (0x3dc0)**:动态段，记录所有依赖库、重定位、版本等信息，符号 `_DYNAMIC` 指向它。
+- **`.got` / `.got.plt` (0x3fb0)**:全局偏移表。`_GLOBAL_OFFSET_TABLE_` 指向 `.got.plt` 开头。`puts`/`printf` 的实际地址运行时填到这里。
+- **`.data` (0x4000)**:已初始化的可写数据：
+
+```text
+.data  0x4010  0x4   main.o
+.data  0x4014  0x8   libcalc.a(calc.o) → global_counter
+```
+
+`__dso_handle` 用于 `atexit`/`__cxa_finalize` 识别自身。
+
+- **`.bss` (0x401c)**:未初始化数据(文件中不占空间，运行时清零):
+
+```text
+.bss   0x4020  0x4   libcalc.a(calc.o) → uninitialized_value
+```
+
+- `_edata`、`__bss_start`、`_end`/`end` 是传统的段边界符号。
+- `.lbss`/`.lrodata`/`.ldata` 是 **large/BFD 大节支持**(x86-64 上通常为空)。
+
+##### 5. 调试与注释节(地址 0)
+
+这些节不加载到内存，地址为 0:
+
+- `.comment`:编译器版本字符串(如 "GCC: (Ubuntu 13...)")。
+- `.debug_aranges`、`.debug_info`、`.debug_abbrev`、`.debug_line`、`.debug_str`、`.debug_line_str`:**DWARF 调试信息**，来自 `main.o` 和 `calc.o`,说明程序是带 `-g` 编译的。`size before relaxing` 表示链接器合并去重了重复的调试字符串。
+
+##### 6. /DISCARD/ 与 OUTPUT
+
+```text
+/DISCARD/
+ *(.note.GNU-stack)     ← 丢弃(不生成 .note.GNU-stack 节)
+ *(.gnu_debuglink)
+ *(.gnu.lto_*)
+OUTPUT(elf_static elf64-x86-64)
+```
+
+- `/DISCARD/`:这些输入节被丢弃，不进入输出文件。
+- `OUTPUT(...)`:输出文件格式为 **静态 ELF、64 位 x86-64**(`elf_static` 指目标格式，不是静态链接——程序显然是动态链接的 PIE)。
+
+##### 7. 整体内存布局总结
+
+```text
+0x0318 ─ 0x0660   ELF 头 + 动态链接元数据(.interp/.dynsym/.rela...)
+0x1000 ─ 0x12b5   代码(.init/.plt/.text/.fini)      ← 可执行
+0x2000 ─ 0x21fc   只读数据(.rodata/.eh_frame)       ← 只读
+0x3db0 ─ 0x4000   RELRO 区(.init_array/.dynamic/.got) ← 只读(重定位后)
+0x4000 ─ 0x4028   可写数据(.data/.bss)               ← 读写
+```
+
+## shared libary
+
+```text
+
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ readelf -h libcalc.so
+ELF Header:
+  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              DYN (Shared object file)
+  Machine:                           Advanced Micro Devices X86-64
+  Version:                           0x1
+  Entry point address:               0x0
+  Start of program headers:          64 (bytes into file)
+  Start of section headers:          14912 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               64 (bytes)
+  Size of program headers:           56 (bytes)
+  Number of program headers:         11
+  Size of section headers:           64 (bytes)
+  Number of section headers:         32
+  Section header string table index: 31
+
+```
+
+`shared object file`, 既有`section headers`也有`program headers`
+
+`libcalc.so`的`.dynamic`和`.dyn-syms`
+
+```text
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ readelf -d libcalc.so
+
+Dynamic section at offset 0x2e58 contains 18 entries:
+  Tag        Type                         Name/Value
+ 0x000000000000000e (SONAME)             Library soname: [libcalc.so]
+ 0x000000000000000c (INIT)               0x1000
+ 0x000000000000000d (FINI)               0x1174
+ 0x0000000000000019 (INIT_ARRAY)         0x3e48
+ 0x000000000000001b (INIT_ARRAYSZ)       8 (bytes)
+ 0x000000000000001a (FINI_ARRAY)         0x3e50
+ 0x000000000000001c (FINI_ARRAYSZ)       8 (bytes)
+ 0x000000006ffffef5 (GNU_HASH)           0x2f0
+ 0x0000000000000005 (STRTAB)             0x418
+ 0x0000000000000006 (SYMTAB)             0x328
+ 0x000000000000000a (STRSZ)              159 (bytes)
+ 0x000000000000000b (SYMENT)             24 (bytes)
+ 0x0000000000000003 (PLTGOT)             0x3fe8
+ 0x0000000000000007 (RELA)               0x4b8
+ 0x0000000000000008 (RELASZ)             216 (bytes)
+ 0x0000000000000009 (RELAENT)            24 (bytes)
+ 0x000000006ffffff9 (RELACOUNT)          3
+ 0x0000000000000000 (NULL)               0x0
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ readelf  --dyn-syms libcalc.so
+
+Symbol table '.dynsym' contains 10 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     1: 0000000000000000     0 NOTYPE  WEAK   DEFAULT  UND __cxa_finalize
+     2: 0000000000000000     0 NOTYPE  WEAK   DEFAULT  UND _ITM_registerTMC[...]
+     3: 0000000000000000     0 NOTYPE  WEAK   DEFAULT  UND _ITM_deregisterT[...]
+     4: 0000000000000000     0 NOTYPE  WEAK   DEFAULT  UND __gmon_start__
+     5: 0000000000004014     4 OBJECT  GLOBAL DEFAULT   21 uninitialized_value
+     6: 00000000000010f9    24 FUNC    GLOBAL DEFAULT   10 add
+     7: 0000000000001111    23 FUNC    GLOBAL DEFAULT   10 multiply
+     8: 0000000000004008     4 OBJECT  GLOBAL DEFAULT   20 global_counter
+     9: 0000000000001128    74 FUNC    GLOBAL DEFAULT   10 update_counter
+```
+
+`elf_shared`的`.dynamic`和相关依赖  
+
+```
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ readelf -d elf_shared
+ldd ./elf_shared
+
+Dynamic section at offset 0x2d88 contains 29 entries:
+  Tag        Type                         Name/Value
+ 0x0000000000000001 (NEEDED)             Shared library: [libcalc.so]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000001d (RUNPATH)            Library runpath: [$ORIGIN]
+ 0x000000000000000c (INIT)               0x1000
+ 0x000000000000000d (FINI)               0x1298
+ 0x0000000000000019 (INIT_ARRAY)         0x3d78
+ 0x000000000000001b (INIT_ARRAYSZ)       8 (bytes)
+ 0x000000000000001a (FINI_ARRAY)         0x3d80
+ 0x000000000000001c (FINI_ARRAYSZ)       8 (bytes)
+ 0x000000006ffffef5 (GNU_HASH)           0x3b0
+ 0x0000000000000005 (STRTAB)             0x518
+ 0x0000000000000006 (SYMTAB)             0x3e0
+ 0x000000000000000a (STRSZ)              230 (bytes)
+ 0x000000000000000b (SYMENT)             24 (bytes)
+ 0x0000000000000015 (DEBUG)              0x0
+ 0x0000000000000003 (PLTGOT)             0x3f98
+ 0x0000000000000002 (PLTRELSZ)           120 (bytes)
+ 0x0000000000000014 (PLTREL)             RELA
+ 0x0000000000000017 (JMPREL)             0x738
+ 0x0000000000000007 (RELA)               0x648
+ 0x0000000000000008 (RELASZ)             240 (bytes)
+ 0x0000000000000009 (RELAENT)            24 (bytes)
+ 0x000000000000001e (FLAGS)              BIND_NOW
+ 0x000000006ffffffb (FLAGS_1)            Flags: NOW PIE
+ 0x000000006ffffffe (VERNEED)            0x618
+ 0x000000006fffffff (VERNEEDNUM)         1
+ 0x000000006ffffff0 (VERSYM)             0x5fe
+ 0x000000006ffffff9 (RELACOUNT)          3
+ 0x0000000000000000 (NULL)               0x0
+        linux-vdso.so.1 (0x00007e6c07df0000)
+        libcalc.so => /home/zoe/workspace/compling_lab/./libcalc.so (0x00007e6c07dde000)
+        libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007e6c07a00000)
+        /lib64/ld-linux-x86-64.so.2 (0x00007e6c07df2000)
+```
+- 这些输出共同说明：`libcalc.so` 是面向 `x86-64`、采用 `小端格式` 的 `64 位 ELF 共享对象`，类型为 `ET_DYN`，没有 `独立程序入口`，保留了 `调试信息` 且未被 `strip`；
+- 它以 `libcalc.so` 为 `SONAME`，并通过 `动态符号表` 对外导出 `add`、`multiply`、`update_counter`、`global_counter` 和 `uninitialized_value`，同时保留少量由 `运行时环境` 选择性解析的 `弱未定义符号`。
+- `elf_shared` 则是 `PIE 动态可执行文件`，明确依赖 `libcalc.so` 和 `libc.so.6`，通过 `$ORIGIN` 在自身所在目录查找 `libcalc.so`，并启用了 `立即绑定`；
+- `ldd` 的结果进一步证明，`运行时` 已成功从当前工程目录加载 `libcalc.so`，从系统目录加载 `libc.so.6`，并由 `ld-linux-x86-64.so.2` 完成 `动态装载` 和 `符号解析`。
+
+| 检查对象或字段               | 输出结果                                   | 可提炼的关键信息                                 |
+| --------------------- | -------------------------------------- | ---------------------------------------- |
+| `file libcalc.so`     | ELF 64-bit LSB shared object, x86-64   | `libcalc.so` 是 x86-64 平台的 64 位小端共享对象     |
+| 调试状态                  | with debug\_info, not stripped         | 包含 DWARF 调试信息和完整符号信息，适合使用 GDB 调试         |
+| ELF 类型                | DYN                                    | 属于共享对象，可在运行时加载到不同虚拟地址                    |
+| Entry point           | `0x0`                                  | 共享库不是独立程序，不需要类似 `_start` 的程序入口           |
+| Program Headers       | 11 个                                   | 描述动态装载器需要映射的段及其权限                        |
+| Section Headers       | 32 个                                   | 描述代码、数据、动态信息、符号和调试信息等 section            |
+| SONAME                | `libcalc.so`                           | 其他 ELF 文件记录依赖时使用的共享库逻辑名称                 |
+| `.dynsym`             | 10 个动态符号                               | 保存供动态链接器查找的导出符号和未定义符号                    |
+| 导出函数                  | `add`、`multiply`、`update_counter`      | 这些函数可被其他可执行文件或共享库动态引用                    |
+| 导出变量                  | `global_counter`、`uninitialized_value` | 这些全局对象也对外可见并可参与动态符号解析                    |
+| 弱未定义符号                | `__cxa_finalize`、`__gmon_start__` 等    | 通用运行时辅助符号，允许不存在，不属于 `calc` 的主要业务接口       |
+| 符号 `Value`            | 如 `add=0x10f9`                         | 是共享库映像内部的相对虚拟地址，运行时地址通常等于加载基址加该值         |
+| 动态字符串表与符号表            | `STRTAB`、`SYMTAB`                      | 分别保存动态符号名称字符串和动态符号记录                     |
+| GNU Hash              | `GNU_HASH=0x2f0`                       | 用于加速动态链接器查找导出符号                          |
+| 动态重定位                 | `RELA` 大小 216 字节，共 9 项                 | 共享库加载后仍有部分地址需要动态链接器修正                    |
+| PLTGOT                | `0x3fe8`                               | 共享库包含 GOT/PLT 相关地址区域，用于动态地址解析            |
+| `elf_shared` 的依赖      | `libcalc.so`、`libc.so.6`               | 前者提供计算模块，后者提供 `puts`、`printf` 等标准库函数     |
+| RUNPATH               | `$ORIGIN`                              | 动态链接器会在 `elf_shared` 所在目录寻找其直接依赖的共享库     |
+| `BIND_NOW` / `NOW`    | 已启用                                    | 可延迟绑定的动态符号在程序启动阶段立即完成解析                  |
+| PIE 标志                | `PIE`                                  | `elf_shared` 是位置无关可执行文件，可配合 ASLR 随机化加载地址 |
+| `ldd` 中的 `libcalc.so` | 指向工程目录下的 `./libcalc.so`                | 证明 `$ORIGIN` 生效，共享库能够被正确找到               |
+| `ldd` 中的 `libc.so.6`  | 指向系统 `/lib/x86_64-linux-gnu`           | C 标准库由系统共享库提供                            |
+| 动态加载器                 | `ld-linux-x86-64.so.2`                 | 负责加载依赖库、执行重定位并解析动态符号                     |
+
+对于 `elf_static`和`elf_shared`，  
+
+| 对比项                          | `elf_static`           | `elf_shared`                |
+| ---------------------------- | ---------------------- | --------------------------- |
+| calc 模块来源                    | `libcalc.a(calc.o)`    | `libcalc.so`                |
+| calc 代码是否进入可执行文件             | 是，合并进自身 `.text`        | 否，保留在 `libcalc.so` 中        |
+| calc 数据是否进入可执行文件             | 是，合并进自身 `.data/.bss`   | 否，保留在 `libcalc.so` 中        |
+| `add` 等符号何时解析                | 静态链接阶段                 | 链接时确认由 `.so` 提供，运行时完成装载与重定位 |
+| 运行时是否需要 calc 库               | 不需要 `libcalc.a`        | 必须能够找到 `libcalc.so`         |
+| 是否存在 `DT_NEEDED: libcalc.so` | 不存在                    | 存在                          |
+| 库更新后是否自动生效                   | 不会，必须重新链接 `elf_static` | ABI 兼容时，替换 `.so` 后重启程序即可生效  |
+| 可执行文件大小                      | 通常较大                   | 通常较小，但需配合 `.so`             |
+| 多个进程的 calc 代码                | 每个可执行文件中各有一份           | `.so` 的只读代码页可被多个进程共享        |
+
+`elf_shared`的`.got`和`.plt`
+```
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ objdump -dsj .plt elf_shared
+
+elf_shared:     file format elf64-x86-64
+
+Contents of section .plt:
+ 1020 ff357a2f 0000ff25 7c2f0000 0f1f4000  .5z/...%|/....@.
+ 1030 f30f1efa 68000000 00e9e2ff ffff6690  ....h.........f.
+ 1040 f30f1efa 68010000 00e9d2ff ffff6690  ....h.........f.
+ 1050 f30f1efa 68020000 00e9c2ff ffff6690  ....h.........f.
+ 1060 f30f1efa 68030000 00e9b2ff ffff6690  ....h.........f.
+ 1070 f30f1efa 68040000 00e9a2ff ffff6690  ....h.........f.
+
+Disassembly of section .plt:
+
+0000000000001020 <.plt>:
+    1020:       ff 35 7a 2f 00 00       push   0x2f7a(%rip)        # 3fa0 <_GLOBAL_OFFSET_TABLE_+0x8>
+    1026:       ff 25 7c 2f 00 00       jmp    *0x2f7c(%rip)        # 3fa8 <_GLOBAL_OFFSET_TABLE_+0x10>
+    102c:       0f 1f 40 00             nopl   0x0(%rax)
+    1030:       f3 0f 1e fa             endbr64
+    1034:       68 00 00 00 00          push   $0x0
+    1039:       e9 e2 ff ff ff          jmp    1020 <_init+0x20>
+    103e:       66 90                   xchg   %ax,%ax
+    1040:       f3 0f 1e fa             endbr64
+    1044:       68 01 00 00 00          push   $0x1
+    1049:       e9 d2 ff ff ff          jmp    1020 <_init+0x20>
+    104e:       66 90                   xchg   %ax,%ax
+    1050:       f3 0f 1e fa             endbr64
+    1054:       68 02 00 00 00          push   $0x2
+    1059:       e9 c2 ff ff ff          jmp    1020 <_init+0x20>
+    105e:       66 90                   xchg   %ax,%ax
+    1060:       f3 0f 1e fa             endbr64
+    1064:       68 03 00 00 00          push   $0x3
+    1069:       e9 b2 ff ff ff          jmp    1020 <_init+0x20>
+    106e:       66 90                   xchg   %ax,%ax
+    1070:       f3 0f 1e fa             endbr64
+    1074:       68 04 00 00 00          push   $0x4
+    1079:       e9 a2 ff ff ff          jmp    1020 <_init+0x20>
+    107e:       66 90                   xchg   %ax,%ax
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ objdump -sj .got elf_shared
+
+elf_shared:     file format elf64-x86-64
+
+Contents of section .got:
+ 3f98 883d0000 00000000 00000000 00000000  .=..............
+ 3fa8 00000000 00000000 30100000 00000000  ........0.......
+ 3fb8 40100000 00000000 50100000 00000000  @.......P.......
+ 3fc8 60100000 00000000 70100000 00000000  `.......p.......
+ 3fd8 00000000 00000000 00000000 00000000  ................
+ 3fe8 00000000 00000000 00000000 00000000  ................
+ 3ff8 00000000 00000000
+
+```
 
