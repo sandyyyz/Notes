@@ -1031,6 +1031,7 @@ Dynamic section at offset 0x2d88 contains 29 entries:
         libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007e6c07a00000)
         /lib64/ld-linux-x86-64.so.2 (0x00007e6c07df2000)
 ```
+
 - 这些输出共同说明：`libcalc.so` 是面向 `x86-64`、采用 `小端格式` 的 `64 位 ELF 共享对象`，类型为 `ET_DYN`，没有 `独立程序入口`，保留了 `调试信息` 且未被 `strip`；
 - 它以 `libcalc.so` 为 `SONAME`，并通过 `动态符号表` 对外导出 `add`、`multiply`、`update_counter`、`global_counter` 和 `uninitialized_value`，同时保留少量由 `运行时环境` 选择性解析的 `弱未定义符号`。
 - `elf_shared` 则是 `PIE 动态可执行文件`，明确依赖 `libcalc.so` 和 `libc.so.6`，通过 `$ORIGIN` 在自身所在目录查找 `libcalc.so`，并启用了 `立即绑定`；
@@ -1076,8 +1077,9 @@ Dynamic section at offset 0x2d88 contains 29 entries:
 | 可执行文件大小                      | 通常较大                   | 通常较小，但需配合 `.so`             |
 | 多个进程的 calc 代码                | 每个可执行文件中各有一份           | `.so` 的只读代码页可被多个进程共享        |
 
-`elf_shared`的`.got`和`.plt`
-```
+`elf_shared`的`.plt`
+
+```asm
 zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ objdump -dsj .plt elf_shared
 
 elf_shared:     file format elf64-x86-64
@@ -1116,6 +1118,13 @@ Disassembly of section .plt:
     1074:       68 04 00 00 00          push   $0x4
     1079:       e9 a2 ff ff ff          jmp    1020 <_init+0x20>
     107e:       66 90                   xchg   %ax,%ax
+
+```
+
+`.got`:  
+
+```
+
 zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ objdump -sj .got elf_shared
 
 elf_shared:     file format elf64-x86-64
@@ -1131,3 +1140,310 @@ Contents of section .got:
 
 ```
 
+
+`.plt.sec`
+
+```asm
+
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ objdump -dj .plt.sec elf_shared
+
+elf_shared:     file format elf64-x86-64
+
+
+Disassembly of section .plt.sec:
+
+0000000000001090 <update_counter@plt>:
+    1090:       f3 0f 1e fa             endbr64
+    1094:       ff 25 16 2f 00 00       jmp    *0x2f16(%rip)        # 3fb0 <update_counter@Base>
+    109a:       66 0f 1f 44 00 00       nopw   0x0(%rax,%rax,1)
+
+00000000000010a0 <add@plt>:
+    10a0:       f3 0f 1e fa             endbr64
+    10a4:       ff 25 0e 2f 00 00       jmp    *0x2f0e(%rip)        # 3fb8 <add@Base>
+    10aa:       66 0f 1f 44 00 00       nopw   0x0(%rax,%rax,1)
+
+00000000000010b0 <multiply@plt>:
+    10b0:       f3 0f 1e fa             endbr64
+    10b4:       ff 25 06 2f 00 00       jmp    *0x2f06(%rip)        # 3fc0 <multiply@Base>
+    10ba:       66 0f 1f 44 00 00       nopw   0x0(%rax,%rax,1)
+
+00000000000010c0 <puts@plt>:
+    10c0:       f3 0f 1e fa             endbr64
+    10c4:       ff 25 fe 2e 00 00       jmp    *0x2efe(%rip)        # 3fc8 <puts@GLIBC_2.2.5>
+    10ca:       66 0f 1f 44 00 00       nopw   0x0(%rax,%rax,1)
+
+00000000000010d0 <printf@plt>:
+    10d0:       f3 0f 1e fa             endbr64
+    10d4:       ff 25 f6 2e 00 00       jmp    *0x2ef6(%rip)        # 3fd0 <printf@GLIBC_2.2.5>
+    10da:       66 0f 1f 44 00 00       nopw   0x0(%rax,%rax,1)
+```
+
+这三个部分如此协作：  
+
+在支持延迟绑定的初始状态下：  
+
+```
+main
+  │ call add@plt
+  ▼
+.plt.sec: 0x10a0
+  │ jmp *GOT[0x3fb8]
+  ▼
+GOT[0x3fb8] 初始值 = 0x1040
+  ▼
+.plt: 0x1040
+  │ push 1
+  │ jmp 0x1020
+  ▼
+PLT0
+  │ 传递当前模块信息
+  │ 跳转到动态链接器
+  ▼
+ld.so 解析 add
+  │ 将 add 的真实地址写入 GOT[0x3fb8]
+  ▼
+libcalc.so:add
+```
+
+完成解析后，下次一调用将变为：  
+
+```
+main
+  → .plt.sec:add@plt
+  → GOT[0x3fb8]
+  → libcalc.so:add
+```
+
+也就是说，所有的函数调用流程如下：  
+1. 调用 function@plt（跳转到 .plt.sec）
+2. .plt.sec 中对应位置将执行 jump *GOT[对应位置]，也就是说 .plt.sec 中对应的 entry 将跳转到 got[index + 3] 所指向的位置
+3. 一开始，*got[index + 3] == 对应的 .plt entry
+4. .plt entry 将 push index，随后 jump plt[0]，plt[0] 是所有 plt entry 共享的跳转地址
+5. plt[0] 将压入 GOT[1] 中保存的当前模块的动态链接上下文，随后跳转到 GOT[2] 中保存的动态解析器入口
+6. 文件中这两项均为 0 → 因为运行时地址在静态链接阶段无法确定 → ld.so 加载程序后才会初始化内存中的相应槽位
+7. got[0]的含义？
+
+当动态链接器将函数的真正地址回调到got表中后，在第二步就将直接跳转到对应函数的位置。  
+
+## loading
+
+首先区分**动态链接器**和**动态库**  
+
+**动态链接器**是负责“加载和连接”的特殊运行时程序，例如 x86-64 Linux 上的 `/lib64/ld-linux-x86-64.so.2`；**动态库**则是被加载和使用的共享对象，例如 `libcalc.so`、`libc.so.6`。内核通过主程序的 `PT_INTERP` 指定并加载动态链接器，动态链接器再读取主程序 `.dynamic` 中的 `DT_NEEDED` 项，查找并加载其依赖的动态库，随后完成符号解析、重定位和初始化。
+
+| 对比项       | 动态链接器                         | 动态库                                                   |
+| --------- | ----------------------------- | ----------------------------------------------------- |
+| 典型文件      | `/lib64/ld-linux-x86-64.so.2` | `libcalc.so`、`libc.so.6`                              |
+| 本质        | 特殊的可执行 ELF 程序                 | ELF 共享对象                                              |
+| 主要作用      | 加载共享库、解析符号、执行重定位、调用初始化函数      | 提供函数和全局变量的具体实现                                        |
+| 谁加载它      | Linux 内核根据 `PT_INTERP` 加载     | 动态链接器根据 `DT_NEEDED` 加载                                |
+| 是否由普通程序调用 | 通常不直接调用                       | 程序通过 PLT/GOT 调用其中函数                                   |
+| 在当前实验中的角色 | 负责装载 `elf_shared` 的依赖         | `libcalc.so` 提供 `add` 等符号，`libc.so.6` 提供 `printf` 等符号 |
+
+`glibc` 是完整的软件包；`libc.so.6` 是其中提供 `C` 运行库功能的共享库；`ld-linux-x86-64.so.2` 是其中负责装载和连接共享库的动态链接器。二者通常应当来自兼容的 `glibc` 版本.  
+运行  
+
+```sh
+LD_DEBUG=libs,reloc,bindings ./elf_shared 2> loader.log
+```
+
+`LD_DEBUG=libs,reloc,bindings` 要求 `glibc` `动态链接器` 输出 `共享库` 搜索、`重定位` 处理和 `符号绑定` 过程；  
+2> `loader.log` 将这些信息从 `标准错误` 重定向到文件。  
+该日志可以按程序启动顺序阅读：  
+加载依赖库 → 处理各模块 `重定位` → `绑定符号` → 调用 `初始化函数` → 将控制权交给程序 → 程序结束后调用 `终止函数`。  
+
+- `LD_DEBUG=libs`：显示动态库的搜索路径、尝试路径和最终选中的库。
+- `LD_DEBUG=reloc`：显示动态链接器正在对哪个 `ELF` 模块进行重定位。
+- `LD_DEBUG=bindings`：显示每个符号引用最终绑定到哪个模块的定义。
+
+`loader.log`:  
+
+```
+     53171:	binding file linux-vdso.so.1 [0] to linux-vdso.so.1 [0]: normal symbol `__vdso_clock_gettime' [LINUX_2.6]
+     53171:	binding file linux-vdso.so.1 [0] to linux-vdso.so.1 [0]: normal symbol `__vdso_gettimeofday' [LINUX_2.6]
+     53171:	binding file linux-vdso.so.1 [0] to linux-vdso.so.1 [0]: normal symbol `__vdso_time' [LINUX_2.6]
+     53171:	binding file linux-vdso.so.1 [0] to linux-vdso.so.1 [0]: normal symbol `__vdso_getcpu' [LINUX_2.6]
+     53171:	binding file linux-vdso.so.1 [0] to linux-vdso.so.1 [0]: normal symbol `__vdso_clock_getres' [LINUX_2.6]
+
+/*
+ * 首先根据 DT_NEEDED 搜索动态库
+ * 这里是 libcalc.so 和 lib.so.6
+ * $ readelf -d elf_shared
+ *
+ * Dynamic section at offset 0x2d88 contains 29 entries:
+ *   Tag        Type                         Name/Value
+ *  0x0000000000000001 (NEEDED)   Shared library: [libcalc.so]
+ *  0x0000000000000001 (NEEDED)   Shared library: [libc.so.6]
+ *  0x000000000000001d (RUNPATH)  Library runpath: [$ORIGIN]
+ */
+
+     53171:	find library=libcalc.so [0]; searching
+     53171:	 search path=/home/zoe/workspace/compling_lab/glibc-hwcaps/x86-64-v3:/home/zoe/workspace/compling_lab/glibc-hwcaps/x86-64-v2:/home/zoe/workspace/compling_lab		(RUNPATH from file ./elf_shared)
+     53171:	  trying file=/home/zoe/workspace/compling_lab/glibc-hwcaps/x86-64-v3/libcalc.so
+     53171:	  trying file=/home/zoe/workspace/compling_lab/glibc-hwcaps/x86-64-v2/libcalc.so
+     53171:	  trying file=/home/zoe/workspace/compling_lab/libcalc.so
+     53171:
+     53171:	find library=libc.so.6 [0]; searching
+     53171:	 search path=/home/zoe/workspace/compling_lab		(RUNPATH from file ./elf_shared)
+     53171:	  trying file=/home/zoe/workspace/compling_lab/libc.so.6
+     53171:	 search cache=/etc/ld.so.cache
+     53171:	  trying file=/lib/x86_64-linux-gnu/libc.so.6
+     53171:
+     53171:
+/*
+ * 开始处理动态重定位
+ * 顺序为：
+ *   libc.so.6
+ *   libcalc.so
+ *   elf_shared
+ *   ld-linux-x86-64.so.2
+ */
+
+     53171:	relocation processing: /lib/x86_64-linux-gnu/libc.so.6
+
+/* binding 格式：
+ * binding file 引用方 [命名空间]
+ * to 定义方 [命名空间]:
+ * 绑定类型 symbol `符号名' [符号版本]
+ *
+ * | 字段                    | 含义                       |
+ * | ----------------------- | -------------------------- |
+ * | `binding file` 后的路径 | 引用该符号的 ELF 模块      |
+ * | `to` 后的路径           | 最终提供符号定义的 ELF 模块 |
+ * | `[0]`                   | 基础动态链接命名空间       |
+ * | `normal symbol`         | 普通符号绑定               |
+ * | 反引号中的名称           | 被解析的符号               |
+ * | `[GLIBC_x.y]`           | 要求或匹配的符号版本       |
+ */
+
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `_res' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `svc_max_pollfd' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `obstack_alloc_failed_handler' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__ctype_toupper' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `loc1' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_dl_argv' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__libc_single_threaded' [GLIBC_2.32]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `free' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `re_syntax_options' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `rpc_createerr' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `stdout' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__ctype32_toupper' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `opterr' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `getdate_err' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__curbrk' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `loc2' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `program_invocation_name' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__fpu_control' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `__libc_enable_secure' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `_IO_2_1_stderr_' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__rcmd_errstr' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__ctype_b' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `error_print_progname' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `stderr' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `obstack_exit_failure' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `__libc_stack_end' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__key_encryptsession_pk_LOCAL' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_rtld_global_ro' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `argp_program_version' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `svcauthdes_stats' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__check_rhosts_file' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `optind' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `_IO_2_1_stdin_' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `program_invocation_short_name' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__ctype32_tolower' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `error_message_count' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `optopt' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__ctype32_b' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `_nl_msg_cat_cntr' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__daylight' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `_nl_domain_bindings' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `argp_program_bug_address' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `_IO_funlockfile' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `svc_fdset' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__libc_dlerror_result' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `stdin' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__timezone' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__ctype_tolower' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `_IO_2_1_stdout_' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__tzname' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `error_one_per_line' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `_res_hconf' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__key_decryptsession_pk_LOCAL' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_rtld_global' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__progname' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `h_errlist' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__environ' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `argp_err_exit_status' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `svc_pollfd' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__progname_full' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `argp_program_version_hook' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `optarg' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `malloc' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `realloc' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `calloc' [GLIBC_2.2.5]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_dl_find_dso_for_object' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_dl_deallocate_tls' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `__tls_get_addr' [GLIBC_2.3]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_dl_signal_error' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_dl_signal_exception' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_dl_audit_symbind_alt' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `__tunable_is_initialized' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_dl_rtld_di_serinfo' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_dl_allocate_tls' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `__tunable_get_val' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_dl_catch_exception' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_dl_allocate_tls_init' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `__nptl_change_stack_perm' [GLIBC_PRIVATE]
+     53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `_dl_audit_preinit' [GLIBC_PRIVATE]
+     53171:
+     53171:	relocation processing: /home/zoe/workspace/compling_lab/libcalc.so (lazy)
+     53171:	binding file /home/zoe/workspace/compling_lab/libcalc.so [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__cxa_finalize'
+     53171:	binding file /home/zoe/workspace/compling_lab/libcalc.so [0] to ./elf_shared [0]: normal symbol `global_counter'
+     53171:	binding file /home/zoe/workspace/compling_lab/libcalc.so [0] to ./elf_shared [0]: normal symbol `uninitialized_value'
+     53171:
+     53171:	relocation processing: ./elf_shared
+     53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__libc_start_main' [GLIBC_2.34]
+     53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__cxa_finalize' [GLIBC_2.2.5]
+     53171:	binding file ./elf_shared [0] to /home/zoe/workspace/compling_lab/libcalc.so [0]: normal symbol `uninitialized_value'
+     53171:	binding file ./elf_shared [0] to /home/zoe/workspace/compling_lab/libcalc.so [0]: normal symbol `global_counter'
+     53171:	binding file ./elf_shared [0] to /home/zoe/workspace/compling_lab/libcalc.so [0]: normal symbol `update_counter'
+     53171:	binding file ./elf_shared [0] to /home/zoe/workspace/compling_lab/libcalc.so [0]: normal symbol `add'
+     53171:	binding file ./elf_shared [0] to /home/zoe/workspace/compling_lab/libcalc.so [0]: normal symbol `multiply'
+     53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `puts' [GLIBC_2.2.5]
+     53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `printf' [GLIBC_2.2.5]
+     53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `calloc' [GLIBC_2.2.5]
+     53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `free' [GLIBC_2.2.5]
+     53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `malloc' [GLIBC_2.2.5]
+     53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `realloc' [GLIBC_2.2.5]
+     53171:
+     53171:	relocation processing: /lib64/ld-linux-x86-64.so.2
+     53171:	binding file /lib64/ld-linux-x86-64.so.2 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `__rseq_offset' [GLIBC_2.35]
+     53171:	binding file /lib64/ld-linux-x86-64.so.2 [0] to /lib64/ld-linux-x86-64.so.2 [0]: normal symbol `__rseq_size' [GLIBC_2.35]
+     53171:
+     53171:	calling init: /lib64/ld-linux-x86-64.so.2
+     53171:
+     53171:
+     53171:	calling init: /lib/x86_64-linux-gnu/libc.so.6
+     53171:
+     53171:
+     53171:	calling init: /home/zoe/workspace/compling_lab/libcalc.so
+     53171:
+     53171:
+     53171:	initialize program: ./elf_shared
+     53171:
+     53171:
+     53171:	transferring control: ./elf_shared
+     53171:
+     53171:
+     53171:	calling fini:  [0]
+     53171:
+     53171:
+     53171:	calling fini: /home/zoe/workspace/compling_lab/libcalc.so [0]
+     53171:
+     53171:
+     53171:	calling fini: /lib/x86_64-linux-gnu/libc.so.6 [0]
+     53171:
+     53171:
+     53171:	calling fini: /lib64/ld-linux-x86-64.so.2 [0]
+     53171:
+```

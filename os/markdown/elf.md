@@ -289,9 +289,38 @@ typedef struct {
 
 OS有两种方式将控制权转移给interpreter，一是OS向interpreter传递一个fd, interpreter可以通过读该文件，将程序载入内存， 二是OS将程序载入内存，再直接将控制权转移给interpreter.  
 
-interpreter 要么是一个 shared object, 要么是executable file.  
+interpreter 要么是一个 shared object, 要么是 executable file.
 
-**动态节 (.dynamic)**：`_DYNAMIC` 数组，元素为 `{ d_tag, d_un }`，`DT_NULL` 标记数组结尾。关键标签：
+- 若 interpreter 是 shared object（常见情况）：
+  - 以位置无关（position-independent）方式加载，地址在每个进程中可能不同
+  - 其段由系统创建在 mmap 等服务使用的动态段区域中
+  - 因此通常不会与原可执行文件的段地址冲突
+
+- 若 interpreter 是 executable file：
+  - 以固定地址加载，段地址直接取自其 program header table 中的虚拟地址
+  - 因此其虚拟地址不得与原可执行文件的段虚拟地址冲突
+
+| | ET_DYN interpreter | ET_EXEC interpreter |
+|---|---|---|
+| 加载方式 | 位置无关，基址由内核在 mmap 区动态选择 | 固定地址，直接用 `p_vaddr` |
+| 地址冲突 | 不会（基址运行时避开已映射区域） | 可能（必须由构建时保证不与主程序重叠） |
+| ASLR | 支持 | 不支持 |
+| 现状 | 现代标准（glibc/musl 的 ld.so） | 历史遗留，基本绝迹 |
+
+**动态节 (.dynamic)**：`_DYNAMIC` 数组，元素为 `{ d_tag, d_un }`，`DT_NULL` 标记数组结尾。其中`d_tag`决定了`d_un`该如何解释。以下是`dyn`的内容：  
+
+
+```c
+struct {
+    Elf32_Sword d_tag;
+    union {
+        Elf32_Word d_val; /* represent integer values with various interpretations. */
+        Elf32_Addr d_ptr; /*  represent program virtual addresses. */
+    } d_un;
+} Elf32_Dyn;
+extern Elf32_Dyn _DYNAMIC[];
+```
+
 - `DT_NEEDED`：依赖的共享库名（宽优先遍历解析符号）
 - `DT_STRTAB` / `DT_SYMTAB` / `DT_STRSZ` / `DT_SYMENT`：符号表与字符串表及其大小
 - `DT_HASH`：符号哈希表地址
