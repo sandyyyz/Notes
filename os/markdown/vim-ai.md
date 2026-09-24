@@ -1,5 +1,17 @@
 # Vim 中使用 vim-ai 解释代码与生成注释
 
+该插件 `vim-ai` 是一个在 Vim 中通过 OpenAI API 调用 AI 的助手，可用于生成代码、编辑文本、头脑风暴、翻译等；它提供 `:AI`、`:AIEdit`、`:AIChat`、`:AIImage` 等命令，支持对当前行、可视选区或提示词进行操作，并支持聊天、文件包含、重试、角色配置、自定义命令和键位绑定。
+
+- **文本/代码补全**：`:AI {prompt}` 补全提示词；对选区执行 `:AI` 补全选区；`:AI {instruction}` 按指令补全选区。
+- **文本编辑**：`:AIEdit` 编辑当前行或选区，可附加指令，如 `:AIEdit fix grammar`。
+- **AI 聊天**：`:AIChat` 开始或继续对话，可带选区/指令；`:AIStopChat` 取消当前聊天生成。
+- **图像生成**：`:AIImage` 根据选区或指令生成图片，默认使用 DALL·E 3。
+- **文件包含**：在聊天中使用 `>>> include` 角色包含文件，支持 glob 路径展开。
+- **重试/替代**：`:AIRedo` 重复上一条 AI 命令，用于重试或获取不同结果。
+- **配置与角色**：通过 `g:vim_ai_*` 配置模型、温度、端点、流式等；支持 `.ini` 角色文件，如 `/grammar`。
+- **自定义与集成**：可设置键位，使用 `AIRun`、`AIEditRun`、`AIChatRun` 创建自定义命令；支持 Markdown 高亮和调试开关。
+
+
 ## 1. 目标
 
 本文给出一套可直接复用的 `vim-ai` 配置，以及相应的自定义方法。目前主要需求如下：
@@ -15,37 +27,7 @@
 
 ## 2. 安装并启用 vim-ai
 
-### 2.1 检查 Python 3 支持
-
-`vim-ai` 要求 Vim 或 Neovim 具有 Python 3 支持。
-
-```bash
-vim --version | grep python3
-```
-
-应看到：
-
-```text
-+python3
-```
-
-也可以在 Vim 中检查：
-
-```vim
-:echo has('python3')
-```
-
-返回 `1` 表示支持。若返回 `0`，需要安装带 Python 3 支持的 Vim，例如 Debian/Ubuntu 环境可安装 `vim-nox`。
-
-### 2.2 使用 vim-plug 安装
-
-在 `~/.vimrc` 中加入：
-
-```vim
-call plug#begin()
-Plug 'madox2/vim-ai'
-call plug#end()
-```
+### 2.1 使用 vim-plug 安装
 
 由于我的`~/.vimrc`配置文件已经安装了插件管理插件`VundleVim`,
 
@@ -64,7 +46,7 @@ Plugin 'madox2/vim-ai'
 :PlugInstall
 ```
 
-### 2.3 使用原生 package 安装
+### 2.2 使用原生 package 安装
 
 不使用插件管理器时，可执行：
 
@@ -74,7 +56,7 @@ git clone https://github.com/madox2/vim-ai.git \
     ~/.vim/pack/plugins/start/vim-ai
 ```
 
-### 2.4 验证插件
+### 2.3 验证插件
 
 重新启动 Vim 后执行：
 
@@ -84,7 +66,8 @@ git clone https://github.com/madox2/vim-ai.git \
 :help vim-ai
 ```
 
-前两条命令应返回 `2`。
+前两条命令应返回 `2`。  
+而最后一条命令将打开`vim-ai`文档  
 
 ---
 
@@ -100,31 +83,33 @@ printf '%s\n' 'YOUR_LENOVO_API_KEY' > ~/.config/vim-ai/lenovo.token
 chmod 600 ~/.config/vim-ai/lenovo.token
 ```
 
-不要将 API Key 直接写入 `.vimrc`，也不要提交到 Git。
-
 ### 3.2 在 vimrc 中定义公共模型参数
 
 ```vim
 let s:cfc_options = {
-      \ 'model': 'glm5.3',
-      \ 'endpoint_url': 'https://YOUR_LENOVO_ENDPOINT/v1/chat/completions',
-      \ 'token_file_path': expand('~/.config/vim-ai/lenovo.token'),
+      \ 'model': 'glm-5.3',
+      \ 'endpoint_url': 'https://cfc-llm-gateway.lenovo.com:4000/v1/chat/completions',
       \ 'auth_type': 'bearer',
-      \ 'temperature': 0.1,
-      \ 'request_timeout': 60,
+      \ 'token_file_path': expand('~/.config/cfc-ai.token'),
+      \ 'request_timeout': 120,
       \ 'stream': 1,
+      \ 'selection_boundary': '#####',
+      \ 'temperature': 0.1,
+      \ 'max_tokens': 16384,
       \ }
+
+
 ```
 
-字段说明：
-
-- `model`：请求中的模型标识，此处为 `glm5.3`。
-- `endpoint_url`：OpenAI-compatible Chat Completions 完整地址。
-- `token_file_path`：API Key 文件路径。
-- `auth_type`：通常为 `bearer`，具体以服务端鉴权要求为准。
-- `temperature`：低值可提高代码解释和注释输出的稳定性。
-- `request_timeout`：请求超时时间，单位为秒。
-- `stream`：启用流式输出。
+- `model`：模型名称，需与网关注册的模型标识一致
+- `endpoint_url`：API 地址，以 `/chat/completions` 结尾
+- `auth_type`：认证方式，Bearer Token
+- `token_file_path`：Token 文件路径，`expand()` 展开 `~` 为家目录
+- `request_timeout`：请求超时时间（秒），此处 120
+- `stream`：是否流式响应，`1` 启用（SSE 分块推送）
+- `selection_boundary`：选中文本边界标记，界定插入/替换位置
+- `temperature`：采样温度（0–2），越低越确定，代码任务建议低值
+- `max_tokens`：单次响应最大 token 数，超限截断
 
 ### 3.3 配置 Chat、Edit 和 Complete
 
@@ -158,12 +143,28 @@ let g:vim_ai_complete = {
       \ },
       \ }
 ```
+**g:vim_ai_chat**(聊天配置)
 
-注意：`open_chat_command` 属于 `ui` 子字典，不能放在 `g:vim_ai_chat` 顶层。自定义 `ui` 时应补齐插件运行时读取的字段，否则可能出现类似以下错误：
+- `provider`: AI 服务提供方，如 `openai`、`gemini`、`ollama` 等
+- `options`: 请求参数(模型、温度、api_key 等)，`copy(s:cfc_options)` 表示复制自定义变量中的选项
+- `ui.open_chat_command`: 打开聊天窗口的 Vim 命令，即在右侧垂直打开一个 80 列宽的新窗口
+- `ui.scratch_buffer_keep_open`: 为 1 时，聊天内容保留在 scratch 缓冲区，不自动关闭
+- `ui.populate_options`: 为 1 时，在聊天界面头部显示当前生效的 options 配置
+- `ui.populate_all_options`: 为 1 时显示全部选项(包括默认值)，而非仅自定义部分
+- `ui.force_new_chat`: 为 1 时每次调用都强制开启新会话，不延续历史上下文
+- `ui.paste_mode`: 为 1 时聊天缓冲区启用 paste 模式，避免自动缩进等干扰
 
-```text
-E716: Key not present in Dictionary: "paste_mode"
-```
+**g:vim_ai_edit**(文本编辑/改写配置)
+
+- `provider`: 同上，指定服务提供方
+- `options`: 编辑请求所用的参数
+- `ui.paste_mode`: 编辑输出时启用 paste 模式
+
+**g:vim_ai_complete**(代码补全配置)
+
+- `provider`: 同上，指定服务提供方
+- `options`: 补全请求所用的参数
+- `ui.paste_mode`: 补全输出时启用 paste 模式
 
 ---
 
@@ -204,7 +205,7 @@ let g:vim_ai_roles_config_file = expand('~/.config/vim-ai/roles.ini')
 ### 4.3 配置快捷键
 
 ```vim
-let mapleader = " "
+let mapleader = ","
 
 " Visual模式：解释选中代码
 xnoremap <silent> <leader>ae :AIChat /kernel_explain<CR>
@@ -222,18 +223,7 @@ nnoremap <silent> <leader>as :AIStopChat<CR>
 nnoremap <silent> <leader>ar :AIRedo<CR>
 ```
 
-使用方式：
-
-1. 按 `V` 进入 Visual Line 模式。
-2. 使用 `j`、`k` 调整选区。
-3. 按 `<Space>ae` 解释代码，或按 `<Space>ac` 添加注释。
-
-等价命令为：
-
-```vim
-:'<,'>AIChat /kernel_explain
-:'<,'>AIEdit /kernel_comment
-```
+在 Visual Line 模式（按 `V` 进入）下用 `j`、`k` 调整选区后，可按 `,ae` 解释代码或按 `,ac` 添加注释，其等价命令分别为 `:'<,'>AIChat /kernel_explain` 和 `:'<,'>AIEdit /kernel_comment`。
 
 `'<,'>` 是 Visual 选区范围，选中代码后按 `:` 会自动产生，无需手工输入。
 
@@ -421,32 +411,6 @@ filetype=aichat
 下一轮问题
 ```
 
-### 6.5 Markdown 文件的处理
-
-如果已有会话被保存为 `.md`，Vim 通常将其识别为 Markdown。此时执行 `:AIChat` 会另开 Chat 窗口，而不是继续当前内容。可临时执行：
-
-```vim
-:setfiletype aichat
-```
-
-更可靠的方式是另存为：
-
-```vim
-:saveas ~/workspace/vimaichat/topic.aichat
-```
-
-### 6.6 保持会话复用
-
-确保：
-
-```vim
-'scratch_buffer_keep_open': 1,
-'force_new_chat': 0,
-```
-
-在源代码窗口再次选择代码并执行 `:AIChat` 时，插件可优先复用已存在的 Chat buffer。若使用 `/right`、`/below` 或 `/tab` 等强制新建会话的 Role，则会创建新窗口。
-
----
 
 ## 7. 常用命令和功能
 
@@ -477,8 +441,6 @@ Role 可在命令中通过 `/role_name` 引用，也可以组合多个 Role：
 ```vim
 :AIChat /kernel_explain /right
 ```
-
-但 `/right` 会倾向于强制新建 Chat。若希望继续已有会话，只使用 `/kernel_explain`，并通过全局 UI 配置控制窗口位置。
 
 ### 7.4 Chat 中包含外部上下文
 
@@ -536,65 +498,6 @@ tail -f /tmp/vim-ai-debug.log
 
 ---
 
-## 8. 完整 vimrc 示例
-
-```vim
-" vim-ai plugin
-call plug#begin()
-Plug 'madox2/vim-ai'
-call plug#end()
-
-let mapleader = " "
-
-" Lenovo glm5.3 OpenAI-compatible configuration
-let s:cfc_options = {
-      \ 'model': 'glm5.3',
-      \ 'endpoint_url': 'https://YOUR_LENOVO_ENDPOINT/v1/chat/completions',
-      \ 'token_file_path': expand('~/.config/vim-ai/lenovo.token'),
-      \ 'auth_type': 'bearer',
-      \ 'temperature': 0.1,
-      \ 'request_timeout': 60,
-      \ 'stream': 1,
-      \ }
-
-let g:vim_ai_roles_config_file = expand('~/.config/vim-ai/roles.ini')
-
-let g:vim_ai_chat = {
-      \ 'provider': 'openai',
-      \ 'options': copy(s:cfc_options),
-      \ 'ui': {
-      \   'open_chat_command': 'vertical botright 80new',
-      \   'scratch_buffer_keep_open': 1,
-      \   'populate_options': 0,
-      \   'populate_all_options': 0,
-      \   'force_new_chat': 0,
-      \   'paste_mode': 1,
-      \ },
-      \ }
-
-let g:vim_ai_edit = {
-      \ 'provider': 'openai',
-      \ 'options': copy(s:cfc_options),
-      \ 'ui': {
-      \   'paste_mode': 1,
-      \ },
-      \ }
-
-let g:vim_ai_complete = {
-      \ 'provider': 'openai',
-      \ 'options': copy(s:cfc_options),
-      \ 'ui': {
-      \   'paste_mode': 1,
-      \ },
-      \ }
-
-xnoremap <silent> <leader>ae :AIChat /kernel_explain<CR>
-xnoremap <silent> <leader>ac :AIEdit /kernel_comment<CR>
-nnoremap <silent> <leader>aa :AIChat<CR>
-nnoremap <silent> <leader>as :AIStopChat<CR>
-nnoremap <silent> <leader>ar :AIRedo<CR>
-```
-
 加载配置：
 
 ```vim
@@ -609,7 +512,7 @@ nnoremap <silent> <leader>ar :AIRedo<CR>
 
 ```text
 V选择目标代码
-    -> <Space>ae
+    -> <leader>ae
     -> 在右侧Chat查看结构化解释
     -> 在Chat末尾追加问题
     -> :AIChat继续会话
@@ -620,7 +523,7 @@ V选择目标代码
 
 ```text
 V选择目标代码
-    -> <Space>ac
+    -> <leader>ac
     -> :!git diff -- % 检查修改
     -> 满意则:w
     -> 不满意则u撤销
@@ -629,15 +532,6 @@ V选择目标代码
 `AIEdit` 会直接替换选区。即使 Prompt 明确禁止修改逻辑，也必须通过 `git diff` 审查结果。
 
 ---
-
-## 10. 限制与注意事项
-
-1. `vim-ai` 默认只理解显式选区和 Chat 中提供的上下文，不会自动检索当前工程。
-2. 模型可能生成事实错误或意外修改代码，必须人工审查。
-3. 不要发送包含密钥、密码、客户数据或其他敏感信息的代码。
-4. Linux 内核及大型 C 工程存在条件编译、架构差异和宏展开问题，仅凭局部代码无法保证完整结论。
-5. 若需要自动查询结构体、调用函数和宏定义，应增加基于 `clangd`、ctags 或 `git grep` 的外部上下文收集层，`vim-ai` 负责 UI 和模型请求。
-6. Lenovo `glm5.3` 的 endpoint、鉴权方式、上下文上限和模型标识必须以实际内部服务配置为准。
 
 ## 参考资料
 
