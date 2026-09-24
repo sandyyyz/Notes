@@ -1314,6 +1314,16 @@ LD_DEBUG=libs,reloc,bindings ./elf_shared 2> loader.log
  * | `normal symbol`         | 普通符号绑定               |
  * | 反引号中的名称           | 被解析的符号               |
  * | `[GLIBC_x.y]`           | 要求或匹配的符号版本       |
+
+
+为什么这里libc还要将符号“重定位到自己”？
+
+| 原因 | 说明 |
+|---|---|
+| 位置无关 | 加载地址运行时才知，GOT/PLT 必须由动态链接器填写 |
+| 符号插入语义 | 全局符号以“先到先得”裁决，libc 不能假设自己赢（LD_PRELOAD、copy relocation 都可能改变结果） |
+| 跨库依赖 | `GLIBC_PRIVATE` 符号实际定义在 `ld.so` 中 |
+| 延迟绑定 | 函数符号首次调用时才解析 |
  */
 
      53171:	binding file /lib/x86_64-linux-gnu/libc.so.6 [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `_res' [GLIBC_2.2.5]
@@ -1401,6 +1411,13 @@ LD_DEBUG=libs,reloc,bindings ./elf_shared 2> loader.log
      53171:	binding file /home/zoe/workspace/compling_lab/libcalc.so [0] to ./elf_shared [0]: normal symbol `global_counter'
      53171:	binding file /home/zoe/workspace/compling_lab/libcalc.so [0] to ./elf_shared [0]: normal symbol `uninitialized_value'
      53171:
+/*
+ * 将 elf_shared 中涉及的符号引用绑定到对应的实现中。
+ *
+ * 这里涉及两个文件：
+ *   - libcalc.so：这是我们自己写的 shared object file。
+ *   - libc.so.6：这是 glibc 生成的 shared object file。
+ */
      53171:	relocation processing: ./elf_shared
      53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__libc_start_main' [GLIBC_2.34]
      53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `__cxa_finalize' [GLIBC_2.2.5]
@@ -1409,6 +1426,7 @@ LD_DEBUG=libs,reloc,bindings ./elf_shared 2> loader.log
      53171:	binding file ./elf_shared [0] to /home/zoe/workspace/compling_lab/libcalc.so [0]: normal symbol `update_counter'
      53171:	binding file ./elf_shared [0] to /home/zoe/workspace/compling_lab/libcalc.so [0]: normal symbol `add'
      53171:	binding file ./elf_shared [0] to /home/zoe/workspace/compling_lab/libcalc.so [0]: normal symbol `multiply'
+/* Implemented in libc.so.6 */
      53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `puts' [GLIBC_2.2.5]
      53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `printf' [GLIBC_2.2.5]
      53171:	binding file ./elf_shared [0] to /lib/x86_64-linux-gnu/libc.so.6 [0]: normal symbol `calloc' [GLIBC_2.2.5]
@@ -1447,3 +1465,75 @@ LD_DEBUG=libs,reloc,bindings ./elf_shared 2> loader.log
      53171:	calling fini: /lib64/ld-linux-x86-64.so.2 [0]
      53171:
 ```
+
+`elf_shared`的`.rela.dyn`和`.rela.plt`为：  
+```
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ readelf -r elf_shared
+
+Relocation section '.rela.dyn' at offset 0x648 contains 10 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000003d78  000000000008 R_X86_64_RELATIVE                    11c0
+000000003d80  000000000008 R_X86_64_RELATIVE                    1180
+000000004008  000000000008 R_X86_64_RELATIVE                    4008
+000000003fd8  000200000006 R_X86_64_GLOB_DAT 0000000000000000 __libc_start_main@GLIBC_2.34 + 0
+000000003fe0  000300000006 R_X86_64_GLOB_DAT 0000000000000000 _ITM_deregisterTM[...] + 0
+000000003fe8  000800000006 R_X86_64_GLOB_DAT 0000000000000000 __gmon_start__ + 0
+000000003ff0  000900000006 R_X86_64_GLOB_DAT 0000000000000000 _ITM_registerTMCl[...] + 0
+000000003ff8  000b00000006 R_X86_64_GLOB_DAT 0000000000000000 __cxa_finalize@GLIBC_2.2.5 + 0
+000000004018  000a00000005 R_X86_64_COPY     0000000000004018 uninitialized_value + 0
+000000004020  000c00000005 R_X86_64_COPY     0000000000004020 global_counter + 0
+
+Relocation section '.rela.plt' at offset 0x738 contains 5 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000003fb0  000100000007 R_X86_64_JUMP_SLO 0000000000000000 update_counter + 0
+000000003fb8  000400000007 R_X86_64_JUMP_SLO 0000000000000000 add + 0
+000000003fc0  000500000007 R_X86_64_JUMP_SLO 0000000000000000 multiply + 0
+000000003fc8  000600000007 R_X86_64_JUMP_SLO 0000000000000000 puts@GLIBC_2.2.5 + 0
+000000003fd0  000700000007 R_X86_64_JUMP_SLO 0000000000000000 printf@GLIBC_2.2.5 + 0
+```
+
+使用`strace`跟踪`elf_shared`的执行过程：  
+```sh
+strace -f -e trace=execve,openat,mmap,mprotect,brk ./elf_shared
+```
+
+输出：  
+
+```
+
+zoe@HUANGZS7-2V8W0R:~/workspace/compling_lab$ strace -f -e trace=execve,openat,mmap,mprotect,brk ./elf_shared
+execve("./elf_shared", ["./elf_shared"], 0x7ffdfd1d3368 /* 35 vars */) = 0
+brk(NULL)                               = 0x61f90f66f000
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7f46eab92000
+openat(AT_FDCWD, "/home/zoe/workspace/compling_lab/glibc-hwcaps/x86-64-v3/libcalc.so", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/home/zoe/workspace/compling_lab/glibc-hwcaps/x86-64-v2/libcalc.so", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/home/zoe/workspace/compling_lab/libcalc.so", O_RDONLY|O_CLOEXEC) = 3
+mmap(NULL, 16408, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7f46eab8d000
+mmap(0x7f46eab8e000, 4096, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1000) = 0x7f46eab8e000
+mmap(0x7f46eab8f000, 4096, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x2000) = 0x7f46eab8f000
+mmap(0x7f46eab90000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x2000) = 0x7f46eab90000
+openat(AT_FDCWD, "/home/zoe/workspace/compling_lab/libc.so.6", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+mmap(NULL, 26115, PROT_READ, MAP_PRIVATE, 3, 0) = 0x7f46eab86000
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+mmap(NULL, 2174352, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7f46ea800000
+mmap(0x7f46ea828000, 1609728, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x28000) = 0x7f46ea828000
+mmap(0x7f46ea9b1000, 323584, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1b1000) = 0x7f46ea9b1000
+mmap(0x7f46eaa00000, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1ff000) = 0x7f46eaa00000
+mmap(0x7f46eaa06000, 52624, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x7f46eaa06000
+mmap(NULL, 12288, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7f46eab83000
+mprotect(0x7f46eaa00000, 16384, PROT_READ) = 0
+mprotect(0x7f46eab90000, 4096, PROT_READ) = 0
+mprotect(0x61f8fe156000, 4096, PROT_READ) = 0
+mprotect(0x7f46eabd2000, 8192, PROT_READ) = 0
+brk(NULL)                               = 0x61f90f66f000
+brk(0x61f90f690000)                     = 0x61f90f690000
+ELF compilation and linking laboratory
+add(6, 7) = 13
+multiply(6, 7) = 42
+global_counter = 110
+uninitialized_value = 3
++++ exited with 0 +++
+
+```
+

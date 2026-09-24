@@ -16,6 +16,8 @@ scp /path/to/file username@server:/path/to/remote/destination
 scp /path/in/local user@host_ip:/path/to/upload/
 ```
 
+对于非regular file, 可以添加 `-r`参数  
+
 ## remote -> local
 
 相应地，从远程服务器向本地机器复制文件：
