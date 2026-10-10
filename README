@@ -7,14 +7,17 @@ tooling. Continuously updated.
 
 ```
 .
-├── os/                # OS / kernel notes, scripts and configs
-│   ├── config/        # editor / debugger configs (.gdbinit)
-│   ├── markdown/      # notes written in Markdown
-│   ├── pdf/           # PDF exports generated from Markdown
-│   └── scripts/       # helper shell scripts
-├── local/             # local notes (separate git repo, not pushed)
-├── vimrcbk            # backup of my .vimrc
-├── LICENSE            # GPLv3
+├── os/                        # OS / kernel notes, scripts, configs and code
+│   ├── code/                  # compile / linker lab code
+│   │   └── compling_lab/      # *.{c,h,s,o,i} + makefile, static/shared/map/log
+│   ├── config/                # editor / debugger configs (.gdbinit)
+│   ├── markdown/              # notes written in Markdown
+│   │   └── lwnweekly-report/  # LWN weekly hot-topic reports
+│   ├── pdf/                   # PDF exports generated from Markdown
+│   └── scripts/               # helper shell scripts
+├── local/                     # local notes (separate git repo, not pushed)
+├── vimrcbk                    # backup of my .vimrc
+├── LICENSE                    # GPLv3
 └── README
 ```
 
@@ -22,15 +25,29 @@ tooling. Continuously updated.
 
 The notes under `os/markdown/` cover, roughly:
 
-- **Memory management** — `mm.md`, `hmm.md`, `cxl.md`, `IAA.md`, `QPL.md`
+- **Memory management** — `mm.md`, `hmm.md`, `cxl.md`, `IAA.md`, `QPL.md`,
+  `swap_memory_reclaim.md`
 - **Synchronization** — `linux_sync.md`, `rwlock_rcu.md`, `hazard_pointer.md`
-- **Boot & linking** — `system_boot.md`, `pxe_ipxe.md`, `dynamic_link.md`,
+- **Boot & linking** — `system_boot.md`, `pxe_ipxe.md`, `uefi.md`,
+  `dynamic_link.md`, `linker.md`, `elf.md`, `execve.md`, `compile.md`,
   `systemV_abi.md`
-- **Kernel tooling** — `strace.md`, `ftrace.md`, `build_debug_kernel.md`
+- **Console & serial** — `console.md`, `8250uart.md`, `baud.md`, `early_prink.md`
+- **Kernel tooling** — `strace.md`, `ftrace.md`, `build_debug_kernel.md`,
+  `linuxlog.md`
 - **C / toolchain** — `__attribute__.md`, `synopsis.md`
-- **Misc** — `docker.md`, `scp.md`, `vimrc.md`, `chat.md`
-- `keyword.md` tracks topics to dig into next (CXL, famfs, HMM, DAX, memcg,
-  tiered-memory, folio, THP, MMIO, IOMMU, ...).
+- **Editor & dev tooling** — `vimrc.md`, `vim-ai.md`, `vim-ai-config.md`,
+  `ctags_cscope_index_guide.md`, `docker.md`, `scp.md`
+- **Storage & systems** — `ridger_mimo.md`, `ftl.md`
+- **LWN weekly** — `lwnweekly-report/` (weekly hot-topic reports)
+- **Misc** — `chat.md`; `keyword.md` tracks topics to dig into next (CXL, famfs,
+  HMM, DAX, memcg, tiered-memory, folio, THP, MMIO, IOMMU, ...).
+
+## Code
+
+`os/code/compling_lab/` is a small C lab used to study the compilation and
+linking pipeline: `main.c` / `calc.c` / `calc.h` with generated `.i`, `.s`, `.o`,
+static (`libcalc.a`, `elf_static`) and shared (`libcalc.so`, `elf_shared`)
+artifacts, along with linker map files and a loader log.
 
 ## Scripts
 
