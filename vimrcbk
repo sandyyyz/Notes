@@ -22,7 +22,12 @@ Plugin 'godlygeek/tabular'
 Plugin 'plasticboy/vim-markdown'
 Plugin 'suan/vim-instant-Markdown'
 "Bundle 'Valloric/YouCompleteMe'
+Plugin 'madox2/vim-ai'
 Plugin 'vim-scripts/taglist.vim'
+Plugin 'tpope/vim-fugitive'
+Plugin 'preservim/tagbar'
+Plugin 'ludovicchabant/vim-gutentags'
+Plugin 'vim-scripts/gtags.vim'
 " stop - all plugins above
 call vundle#end()
 filetype plugin indent on
@@ -32,6 +37,9 @@ filetype plugin indent on
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 " make instant_markdown to autostart
 let g:instant_markdown_autostart = 0
+let g:instant_markdown_theme = 'dark'
+let g:instant_markdown_port = 8090
+let g:instant_markdown_logfile = '/tmp/instant_markdown.log'
 " Sets how many lines of history VIM has to remember
 set history=1000
 
@@ -109,11 +117,10 @@ colorscheme gruvbox
 "colorscheme default
 "colorscheme blue
 "colorscheme zellner
-
-
 """"""""""""""""""""""""""""""""""""""""""""""""""""
 " => misc
 """""""""""""""""""""""""""""""""""""""""""""""""""""
+
 " With a map leader it's possible to do extra key combinations
 " like <leader>w saves the current file
 let mapleader = ","
@@ -121,7 +128,12 @@ let g:mapleader = ","
 
 set tags=tags;\
 set path+=include;\
+"set timeoutlen=100
 
+
+nmap <space><space> 0
+nmap <space> $
+" map $ and 0 ...
 nmap <leader>k :InstantMarkdownPreview<cr>
 nmap <leader>x :%!xxd<CR>
 "nmap mm :%!xxd -r<CR>
@@ -134,6 +146,8 @@ nmap >> 5<C-w>>
 nmap << 5<C-w><
 nmap 11 :set nonu<cr>
 nmap 22 :set nu<cr>
+nmap 33 :set nohlsearch<CR>
+nmap 44 :set hlsearch<CR>
 nmap cm :!
 
 "map <leader>s :split<cr>
@@ -553,8 +567,8 @@ endfunc
 " => Moving around, tabs and buffers
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 " Map space to / (search) and c-space to ? (backgwards search)
-map <space> /
-map <c-space> ?
+"map <space> /
+"map <c-space> ?
 map <silent> <leader><cr> :noh<cr>
 
 " Smart way to move btw. windows
@@ -1027,3 +1041,226 @@ map <leader>p :cp<cr>
 
 
 set viminfo='1000
+
+" fugitive / tagbar / gutentags / gtags configuration
+"
+" --- Tagbar：文件结构大纲侧栏 ---
+let g:tagbar_width = 40
+nnoremap <silent> <leader>tb :TagbarToggle<CR>
+
+" --- gutentags：后台自动生成 ctags ---
+let g:gutentags_cache_dir = expand('~/.cache/tags')
+
+" --- gtags.vim：GNU Global 交叉引用 ---
+let g:Gtags_Auto_Map = 0
+nnoremap <silent> <leader>gd :Gtags <C-R><C-W><CR>
+nnoremap <silent> <leader>gr :Gtags -r <C-R><C-W><CR>
+nnoremap <silent> <leader>gc :GtagsCursor<CR>
+
+" vim-ai configuration
+"
+
+command! -nargs=1 -complete=file AIChatOpen
+      \ execute 'vertical rightbelow 80split ' . fnameescape(<q-args>)
+
+let s:cfc_options = {
+      \ 'model': 'glm-5.3',
+      \ 'endpoint_url': 'https://cfc-llm-gateway.lenovo.com:4000/v1/chat/completions',
+      \ 'auth_type': 'bearer',
+      \ 'token_file_path': expand('~/.config/cfc-ai.token'),
+      \ 'request_timeout': 120,
+      \ 'stream': 1,
+      \ 'selection_boundary': '#####',
+      \ 'temperature': 0.1,
+      \ 'max_tokens': 16384,
+      \ }
+
+let g:vim_ai_chat = {
+      \ 'provider': 'openai',
+      \ 'options': copy(s:cfc_options),
+      \ 'ui': {
+      \   'open_chat_command': 'vertical botright 80new',
+      \   'scratch_buffer_keep_open': 0,
+      \   'populate_options': 0,
+      \   'populate_all_options': 0,
+      \   'force_new_chat': 0,
+      \   'paste_mode': 1,
+      \ },
+      \ }
+let g:vim_ai_complete = {
+      \ 'provider': 'openai',
+      \ 'options': copy(s:cfc_options),
+      \ }
+
+let g:vim_ai_edit = {
+      \ 'provider': 'openai',
+      \ 'options': copy(s:cfc_options),
+      \ }
+
+" 返回指定行之后的第一个非空内容行
+function! s:AIChatFirstContent(lines, start, end) abort
+  let l:index = a:start
+
+  while l:index <= a:end
+    let l:text = trim(a:lines[l:index - 1])
+
+    if !empty(l:text)
+          \ && l:text !~# '^>>>'
+          \ && l:text !~# '^<<<'
+      return [l:index, l:text]
+    endif
+
+    let l:index += 1
+  endwhile
+
+  return [a:start, '(无内容)']
+endfunction
+
+
+" 为当前aichat buffer生成Location List索引
+function! AIChatBuildIndex() abort
+  if &filetype !=# 'aichat'
+    echohl WarningMsg
+    echom 'AIChatIndex: 当前buffer不是aichat文件'
+    echohl None
+    return
+  endif
+
+  let l:lines = getline(1, '$')
+  let l:entries = []
+  let l:question_number = 0
+  let l:answer_number = 0
+  let l:total = len(l:lines)
+  let l:index = 1
+
+  while l:index <= l:total
+    let l:line = trim(l:lines[l:index - 1])
+
+    if l:line =~# '^>>>\s*user\s*$'
+      let l:question_number += 1
+
+      let l:next_marker = l:total + 1
+      let l:search = l:index + 1
+
+      while l:search <= l:total
+        if trim(l:lines[l:search - 1]) =~# '^\(>>>\|<<<\)'
+          let l:next_marker = l:search
+          break
+        endif
+        let l:search += 1
+      endwhile
+
+      let [l:content_line, l:content] =
+            \ s:AIChatFirstContent(
+            \   l:lines,
+            \   l:index + 1,
+            \   l:next_marker - 1)
+
+      call add(l:entries, {
+            \ 'bufnr': bufnr('%'),
+            \ 'lnum': l:index,
+            \ 'col': 1,
+            \ 'text': printf(
+            \   'Q%d  %s',
+            \   l:question_number,
+            \   strcharpart(l:content, 0, 80)),
+            \ })
+
+    elseif l:line =~# '^<<<\s*assistant\s*$'
+      let l:answer_number += 1
+
+      let l:next_marker = l:total + 1
+      let l:search = l:index + 1
+
+      while l:search <= l:total
+        if trim(l:lines[l:search - 1]) =~# '^\(>>>\|<<<\)'
+          let l:next_marker = l:search
+          break
+        endif
+        let l:search += 1
+      endwhile
+
+      let l:summary_line = 0
+      let l:summary = ''
+      let l:search = l:index + 1
+
+      " 优先检索AI生成的“摘要：”行
+      while l:search < l:next_marker
+        let l:text = trim(l:lines[l:search - 1])
+
+        if l:text =~# '^摘要[：:]'
+          let l:summary_line = l:search
+          let l:summary = substitute(
+                \ l:text,
+                \ '^摘要[：:]\s*',
+                \ '',
+                \ '')
+          break
+        endif
+
+        let l:search += 1
+      endwhile
+
+      " 旧会话没有摘要时，使用回答中的第一个非空行
+      if empty(l:summary)
+        let [l:summary_line, l:summary] =
+              \ s:AIChatFirstContent(
+              \   l:lines,
+              \   l:index + 1,
+              \   l:next_marker - 1)
+      endif
+
+      call add(l:entries, {
+            \ 'bufnr': bufnr('%'),
+            \ 'lnum': l:summary_line > 0
+            \            ? l:summary_line
+            \            : l:index,
+            \ 'col': 1,
+            \ 'text': printf(
+            \   'A%d  %s',
+            \   l:answer_number,
+            \   strcharpart(l:summary, 0, 80)),
+            \ })
+    endif
+
+    let l:index += 1
+  endwhile
+
+  call setloclist(
+      \ 0,
+      \ [],
+      \ 'r',
+      \ {
+      \   'title': 'AIChat问答导航',
+      \   'items': l:entries,
+      \ })
+  if empty(l:entries)
+    echo 'AIChatIndex: 当前会话中没有可索引的问答'
+    return
+  endif
+
+  lopen
+endfunction
+
+" vim-ai role配置文件
+let g:vim_ai_roles_config_file = expand('~/.config/vim-ai/roles.ini')
+
+command! AIChatIndex call AIChatBuildIndex()
+
+noremap <silent> <leader>at :AIChatIndex<CR>
+" Visual模式：解释选中的代码
+xnoremap <silent> <leader>ae :AIChat /code_explain<CR>
+
+" Visual模式：为选中的内核代码添加英文注释
+xnoremap <silent> <leader>ac :AIEdit /kernel_comment<CR>
+
+nnoremap <leader>ao :AIChatOpen 
+" 停止正在生成的AIChat响应
+nnoremap <silent> <leader>as :AIStopChat<CR>
+
+nnoremap <leader>al :lclose<CR>
+
+nnoremap <leader>aw :AIChat<CR>
+
+" enable full markdown highlighting
+let g:vim_ai_chat_markdown = 1

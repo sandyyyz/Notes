@@ -400,7 +400,17 @@ Symbol table '.symtab' contains 20 entries:
 
 ```
 
-该符号表（.symtab）共20个条目，每条包含编号、Value（符号值/地址，可重定位文件中多为0）、Size（符号大小，如main占207字节、message占39字节）、Type（类型：FUNC函数、OBJECT变量、SECTION节、FILE源文件、NOTYPE未指定）、Bind（绑定属性：LOCAL局部符号仅本文件可见，GLOBAL全局符号可被链接时跨文件引用）、Vis（可见性，均为DEFAULT）、Ndx（所属节索引或特殊值：ABS表示绝对符号不参与重定位，UND表示未定义符号需在其他目标文件或库中解析，数字如1、3、5表示定义在.text、.data、.rodata等节中）以及符号名。其中main是本文件定义的全局函数，local_data和message是局部变量，而puts、add、printf、multiply、global_counter等UND符号是本文件引用但未定义的，它们正是后续链接步骤的关键输入：静态链接器（ld）会在链接时根据GLOBAL/UND符号在其他目标文件的.symtab和全局符号表中查找定义并完成符号解析，若找不到则报“undefined reference”错误；解析成功后，链接器再根据符号所在的节进行存储空间分配，将Value从0修正为实际虚拟地址，并生成可执行文件中合并后的符号表供运行时动态链接器（ld.so）解析libc等共享库中的符号（如puts、printf），从而将符号表、重定位和动态链接三个阶段串联起来。  
+该符号表（.symtab）共20个条目，每条包含
+编号、  
+Value（符号值/地址，可重定位文件中多为0）、  
+Size（符号大小，如main占207字节、message占39字节）、  
+Type（类型：FUNC函数、OBJECT变量、SECTION节、FILE源文件、NOTYPE未指定）、  
+Bind（绑定属性：LOCAL局部符号仅本文件可见，GLOBAL全局符号可被链接时跨文件引用）、  
+Vis（可见性，均为DEFAULT）、  
+Ndx（所属节索引或特殊值：ABS表示绝对符号不参与重定位，UND表示未定义符号需在其他目标文件或库中解析，数字如1、3、5表示定义在.text、.data、.rodata等节中）以及  
+符号名。  
+其中main是本文件定义的全局函数，local_data和message是局部变量，而puts、add、printf、multiply、global_counter等UND符号是本文件引用但未定义的，它们正是后续链接步骤的关键输入：静态链接器（ld）会在链接时根据GLOBAL/UND符号在其他目标文件的.symtab和全局符号表中查找定义并完成符号解析，若找不到则报“undefined reference”错误；  
+解析成功后，链接器再根据符号所在的节进行存储空间分配，将Value从0修正为实际虚拟地址，并生成可执行文件中合并后的符号表供运行时动态链接器（ld.so）解析libc等共享库中的符号（如puts、printf），从而将符号表、重定位和动态链接三个阶段串联起来。  
 
 这里的Ndx标注当前符号所属的section，可以从section header table找到对应：  
 
