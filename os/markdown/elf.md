@@ -73,7 +73,11 @@ typedef struct {
 } Elf32_Ehdr;
 ```
 
+![e_type](https://raw.githubusercontent.com/sandyyyz/Image-hosting/main/img/e_type.png)  
+
 关键字段含义：
+- `e_type`: elf文件类型，详见上图
+    - `e_type`: elf文件类型，详见上图
 - `e_entry`：程序第一条指令的虚拟地址；无入口点则为 0。
 - `e_phoff` / `e_shoff`：程序头表、节头表在文件中的字节偏移。
 - `e_phnum` × `e_phentsize` = 程序头表总大小；`e_shnum` × `e_shentsize` = 节头表总大小。
@@ -257,6 +261,10 @@ meaningful only for executable and shared object files.
 
 “A segment contains one or more sections”表示一个 Program Header 所描述的文件和内存范围覆盖一个或多个 Section；Section 提供链接语义，Segment把这些 Section按地址、权限和装载要求组织成内核可映射的单位。  
 
+Given a object file, the system must:  
+1. load progam to memory as a process image.
+2. resolve symbolic references among the object files that conpose the process.
+
 程序头表描述如何创建进程映像，只对可执行和共享文件有意义。
 
 ```c
@@ -271,15 +279,36 @@ typedef struct {
     Elf32_Word p_align;   // 对齐
 } Elf32_Phdr;
 ```
+| 类别 | 值 | 名称 | 说明 |
+|------|-----|------|------|
+| 段类型 (p_type) | 0 | `PT_NULL` | 空 |
+| 段类型 (p_type) | 1 | `PT_LOAD` | 可装载段 |
+| 段类型 (p_type) | 2 | `PT_DYNAMIC` | 动态信息 |
+| 段类型 (p_type) | 3 | `PT_INTERP` | 程序解释器路径 |
+| 段类型 (p_type) | 4 | `PT_NOTE` | 注解 |
+| 段类型 (p_type) | 6 | `PT_PHDR` | 程序头表自身 |
+| 段权限 (p_flags) | 1 | `PF_X` | 执行 |
+| 段权限 (p_flags) | 2 | `PF_W` | 写 |
+| 段权限 (p_flags) | 4 | `PF_R` | 读 |
 
-**段类型 (p_type)**：`PT_NULL`(0) 空、`PT_LOAD`(1) 可装载段、`PT_DYNAMIC`(2) 动态信息、`PT_INTERP`(3) 程序解释器路径、`PT_NOTE`(4) 注解、`PT_PHDR`(6) 程序头表自身。
-
-**段权限 (p_flags)**：`PF_X`(1) 执行、`PF_W`(2) 写、`PF_R`(4) 读。典型文本段为 R+X，数据段为 R+W+X。
+典型文本段为 R+X，数据段为 R+W+X。
 
 **装载要点**：
 - 可装载段的 `p_vaddr` 与 `p_offset` 必须按页大小（Intel 架构 4KB / 0x1000）同余，便于分页。
 - `p_memsz > p_filesz` 的部分为未初始化数据，系统以 0 填充（对应 `.bss`）。
 - **基址 (base address)**：单个可执行/共享对象在其加载中，内存 V.A. 与文件 V.A. 的差值恒为常量，动态链接时以此"重定位"内存映像。共享对象通常含位置无关代码 (PIC)，可被任意进程以不同基址装载。
+
+```
+ELF 中的 p_vaddr 是链接视角下的地址，不一定是实际运行地址。
+
+运行时地址 = p_vaddr + base address
+
+共享库可以整体移动，但所有 PT_LOAD 段必须加上同一个 base address，
+这样段之间的相对距离不变，位置无关代码才能继续正确运行。
+```
+
+常见segment:  
+![text_and_data_segment](https://raw.githubusercontent.com/sandyyyz/Image-hosting/main/img/text_and_data_segment.png)
 
 ## 9. 动态链接（Dynamic Linking）
 

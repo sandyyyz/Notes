@@ -198,7 +198,24 @@ struct linux_binprm {
 
 1. confirm stack position according to configuration `STACK_GROWUP` or not.
 2. adjust stack execute permissions
+3. `tlb_gather_mmu`, initialize a tbl_gather structure for mm.
+4. `mprotect_fixup`, update vm's protect flags.
+5. `tlb_finish_mmu`, finish a mmu_gather structure.
+6. `relocate_vma_donw(vma, stack_shift)`, move stack pages donw in memory.
+7. `vm_flags_clear(vma, VM_STACK_INCOMPLETE_SETUP)`, clear VM_STACK_INCOMPLETE_SETUP in stack.
+8. determines stack_size, stack_base, then return.
+9. map the ELF image into the correct location in memory, with each loadable segment's addr = `load_bias + elf_ppnt->p_vaddr`
+10. load the interpreter into the correcton location in memory.`load_elf_interp`
+11. allow_write_access for interpreter, `exe_file_allow_write_access(interpreter)`
+12. free interpreter's loaded elf header and program headers table.
+13. free progam's program headers table.
+14. `set_binfmt(&elf_format)`, set current->mm->binfmt = &elf_format.
+15. setup addtional pages if arch has.`ARCH_SETUP_ADDITIONAL,PAGES(bprm, elf_ex, !!interpreter)`
+16. `create_elf_table(bprm, elf_ex, interp_load_addr, e_entry, phdr_addr)`
 
+## static int create_elf_tables
+
+1. `p = arch_align_stack(p)`, 初始用户栈指针做随机对齐，减少l1 cache 争用
 
 ## int begin_new_exec
 

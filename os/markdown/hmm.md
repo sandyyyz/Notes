@@ -36,7 +36,7 @@ Design purpose:
 APIS:
 
 
-#### int hmm_mirror_register(struct hmm_mirror *mirror, struct mm_struct *mm);
+#### int hmm_mirror_register(struct hmm_mirror \*mirror, struct mm_struct \*mm);
 
 A device driver that wants to mirror a process address space must start with registration of an hmm_mirror struct.
 
@@ -219,7 +219,7 @@ struct hmm_range {
 Q: pfns 数组追踪 [start, end) 内所有 pfns？
 
 
-#### int hmm_vma_get_pfns(struct vm_area_struct *vma, struct hmm_range *range, unsigned long start, unsigned long end, hmm_pfn_t *pfns);
+#### int hmm_vma_get_pfns(struct vm_area_struct \*vma, struct hmm_range \*range, unsigned long start, unsigned long end, hmm_pfn_t \*pfns);
 
 snap shot CPU page table for a range of virtual addresses.
 
