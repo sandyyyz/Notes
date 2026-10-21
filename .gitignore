@@ -1,1 +1,11 @@
-/local/
+# Work notes: separate repository under work/, never push
+/work/
+
+# Lab build products
+labs/**/output/
+*.o
+*.a
+*.so
+*.i
+*.map
+*.log
