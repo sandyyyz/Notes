@@ -156,27 +156,41 @@ struct linux_binprm {
 
 ```
 
+最后  
+
+```c
+freebprm(bprm)
+putname(filename)
+return retval
+```
 
 ## int bprm_execve(struct linux_binprm *bprm)
 
 
-1. 为当前任务准备creds  
-
+1. 为当前任务准备creds
 2. check unsafe exec
-
 3. 标记current->in_execve = 1
-
 4. 停用当前任务的mm_cid并释放其占用的cid资源
-
 5. 调用`shced_exec()`， 为当前任务重新选择CPU，在必要时触发一次迁移
-
 6. `security_bprm_creds_for_exec`, 通过LSM钩子准备并检查新进程的安全凭证
-
 7. 接下来调用 `exec_binprm`
+8. `sched_mm_cid_after_execve(current)`
+9. `rseq_execve(current)`
+10. `current->in_execve = 0`
+11. `user_events_execve(current)`
+12. `acct_update_integrals(current)`
+13. `task_numa_free(current, false)`
+14. return.
 
-### static int exec_binprm(struct linux_binprm *bprm)
+## static int exec_binprm(struct linux_binprm *bprm)
 
-
+1. save current->pid, and read old_vpid.
+2. looping, `saerch_binary_handler(bprm)`,which will call `fmt->load_binary(bprm)` inside.
+3. `audit_bprm(bmrm)`, save record to audit if audit_context exists.
+4. `trace_shced_process_exec(current, old_pid, bprm)`
+5. `ptrace_event(PTRACE_EVENT_EXEC, old_vpid)`
+6. `proc_exec_connector(current)`
+7. return.
 
 ## static int load_elf_binary
 
@@ -193,6 +207,73 @@ struct linux_binprm {
 11. set randonmize va space if needed.
 12. `setup_new_exec(bprm)`, `arch_pick_mmap_layout`, pick mmap layout for new mm according to personality and rlimit, then `arch_setup_new_exec`, do arch-related setting.
 13. `setup_arg_pages`, determine the final positon and the permission of new stack, and expand stack space.
+14. map the ELF image into the correct location in memory, with each loadable segment's addr = `load_bias + elf_ppnt->p_vaddr`
+15. load the interpreter into the correcton location in memory.`load_elf_interp`
+16. allow_write_access for interpreter, `exe_file_allow_write_access(interpreter)`
+17. free interpreter's loaded elf header and program headers table.
+18. free progam's program headers table.
+19. `set_binfmt(&elf_format)`, set current->mm->binfmt = &elf_format.
+20. setup addtional pages if arch has.`ARCH_SETUP_ADDITIONAL,PAGES(bprm, elf_ex, !!interpreter)`
+21. `create_elf_table(bprm, elf_ex, interp_load_addr, e_entry, phdr_addr)`
+22. `elf_coredump_set_mm_eflags(mm, elf_ex->e_flags)`
+23. for static PIE, move the brk area out of the mmap region and into the unused ELF_ET_DYN_BASE region.
+24. pagealign the elf_brk.
+25. randonmizs the brk if config PF_RANDONMIZE && snapshot_randonmize_va_sapce > 1.
+26. simulate svr4's behavior(maps page0 as read-only then do_mseal) if needed.
+27. initialize partial registers to zero according to the platform-related abi.
+28. store any stack rlimit changes before starting thread by function `finalize_exec(bprm)`
+29. start new thread,`START_THREAD(elf_ex, regs, elf_entry, bprm->p)`
+30. return retval=0.
+
+## static int create_elf_tables
+
+1. if the architecture has a platform capbility string, copy it to userspace.
+2. copy 16 random bytes to user for userpace PRNG seeding.
+3. create elf interpreter info(aux vectors) in `mm->saved_auxv`(in the kernel). `NEW_AUX_ENT(XXXX)`
+4. put argc on the stack
+5. put all argv on the stack ended by 0
+6. put all list of envp pointers on the stack, ended by 0
+7. put aux vectors on the stack, ended by AUX_NULL(0)
+8. return 0
+
+向下增长架构（`CONFIG_STACK_GROWSUP` 未定义）的最终布局，从高地址到低地址：
+
+```
+高地址
++--------------------------------------+
+| argv/envp 字符串区                    |  <- mm->arg_start ... mm->env_end
+| （由 copy_strings 提前放置）          |
+| bprm->exec 指向的 execfn 字符串       |
++--------------------------------------+
+| u_platform 字符串                     |  <- AT_PLATFORM 指向
++--------------------------------------+
+| u_base_platform 字符串                |  <- AT_BASE_PLATFORM 指向
++--------------------------------------+
+| u_rand_bytes（16 字节）               |  <- AT_RANDOM 指向
++--------------------------------------+
+| （可能的对齐间隙）                    |
++--------------------------------------+
+| auxv[ei_index-1] = AT_NULL, 0         |
+| ...                                   |
+| auxv[1]                               |
+| auxv[0]                               |  <- copy_to_user 目标
++--------------------------------------+
+| （STACK_ROUND 对齐间隙）              |
++--------------------------------------+
+| envp NULL                             |
+| envp[envc-1]                          |
+| ...                                   |
+| envp[0]                               |
+| argv NULL                             |
+| argv[argc-1]                          |
+| ...                                   |
+| argv[0]                               |
+| argc                                  |  <- sp = bprm->p（最低地址）
++--------------------------------------+
+低地址
+```
+
+
 
 ## int setup_arg_pages
 
@@ -204,14 +285,6 @@ struct linux_binprm {
 6. `relocate_vma_donw(vma, stack_shift)`, move stack pages donw in memory.
 7. `vm_flags_clear(vma, VM_STACK_INCOMPLETE_SETUP)`, clear VM_STACK_INCOMPLETE_SETUP in stack.
 8. determines stack_size, stack_base, then return.
-9. map the ELF image into the correct location in memory, with each loadable segment's addr = `load_bias + elf_ppnt->p_vaddr`
-10. load the interpreter into the correcton location in memory.`load_elf_interp`
-11. allow_write_access for interpreter, `exe_file_allow_write_access(interpreter)`
-12. free interpreter's loaded elf header and program headers table.
-13. free progam's program headers table.
-14. `set_binfmt(&elf_format)`, set current->mm->binfmt = &elf_format.
-15. setup addtional pages if arch has.`ARCH_SETUP_ADDITIONAL,PAGES(bprm, elf_ex, !!interpreter)`
-16. `create_elf_table(bprm, elf_ex, interp_load_addr, e_entry, phdr_addr)`
 
 ## static int create_elf_tables
 
