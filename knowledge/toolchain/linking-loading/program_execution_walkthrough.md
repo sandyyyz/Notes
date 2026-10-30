@@ -8,7 +8,7 @@
 
 | 章节 | 核心问题 | 首轮分享取舍 |
 |---|---|---|
-| [1. 总览](#overview) | 各阶段交付什么？ | 必讲，建立全景 |
+| [1. 实验文件与构建过程](#overview) | 文件放在哪里，各自保存什么？ | 必讲，认识实验与产物 |
 | [2. 拆开 .o](#object-files) | 机器码以外还需要什么？ | 必讲，聚焦符号和重定位 |
 | [3. 链接](#linking) | 多个输入如何形成一个输出？ | 必讲，手算一次调用位移 |
 | [4. 最终 ELF](#executable-elf) | 内核需要哪些装载说明？ | 必讲，建立双视图 |
@@ -29,32 +29,48 @@
 - [GNU linker](linker.md)、[动态链接概览](dynamic_link.md)。
 - [execve 源码笔记](../../linux-kernel/execution/execve.md)。
 
-用户原始实验目录为 `/home/zoe/workspace/study/compling_lab`，本次仅只读分析；仓库内对应代码见 [main.c](../../../labs/compiling-linking/src/main.c)、[calc.c](../../../labs/compiling-linking/src/calc.c)、[calc.h](../../../labs/compiling-linking/src/calc.h)。
+旧版基于 WSL2 开发环境编写；本版于 **2026-10-28** 在当前 container 中重新构建并验证，不再依赖旧环境的外部实验目录。实验源码直接使用仓库内的 [main.c](../../../labs/compiling-linking/src/main.c)、[calc.c](../../../labs/compiling-linking/src/calc.c)、[calc.h](../../../labs/compiling-linking/src/calc.h)。
 
-新增的 [walkthrough 实验](../../../labs/compiling-linking/walkthrough/Makefile) 复用这些源码，构建产物集中放到 gitignored 的 `labs/compiling-linking/output/program-execution-walkthrough/`，不改动原始实验。
+[walkthrough 实验](../../../labs/compiling-linking/walkthrough/Makefile) 复用这些源码，构建产物集中放到 gitignored 的 `labs/compiling-linking/output/program-execution-walkthrough/`，不改动原始实验源码。
 
 本次实测环境：
 
 ```text
-Linux x86_64 / WSL2
-kernel: 6.18.33.2-microsoft-standard-WSL2
-gcc:    Ubuntu 13.3.0
+Linux x86_64 / container
+OS:     Ubuntu 24.04.5 LTS (Noble Numbat)
+kernel: 5.15.0-191-generic
+gcc:    13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1)
 ld:     GNU Binutils for Ubuntu 2.42
-glibc:  2.39
+glibc:  2.39 (Ubuntu 2.39-0ubuntu8.9)
+gdb:    15.1 (Ubuntu 15.1-1ubuntu1~24.04.1)
+strace: 6.8
+make:   GNU Make 4.3
+page:   4096 bytes
 ```
 
-源码导航固定引用 **Linux v6.8** 和 **glibc 2.39**，用于理解机制。Linux v6.8 不是本机正在运行的内核版本，不把它的函数调用链声称为本机内核逐行跟踪结果。发行版 glibc 也可能带补丁，正文用本机实验与上游版本交叉解释。[R4][R5][R6]
+容器中的 `uname -r` 反映共享的宿主机内核，不是容器内 Ubuntu 用户态的发行版本。当前 GCC / binutils / glibc 的主要版本与旧环境一致；本次重新核对后，正文的 `.o` 节布局、调用位移、主程序入口和 PLT / GOT 链接地址仍一致，运行时随机地址则已换成本轮实测值。
+
+源码导航仍固定引用 **Linux v6.8** 和 **glibc 2.39**，用于理解机制。Linux v6.8 不是当前容器共享的内核版本，不把它的函数调用链声称为本机内核逐行跟踪结果。发行版 glibc 也可能带补丁，正文用本机实验与上游版本交叉解释。[R4][R5][R6]
 
 ### 一次性准备
 
-从笔记仓库根目录执行，后续 shell 实验默认处于构建产物目录：
+从笔记仓库根目录执行，先记录环境并强制重新构建，避免迁移进来的旧产物因时间戳未变而被 make 复用。后续 shell 实验默认处于构建产物目录：
 
 ```bash
-make -C labs/compiling-linking/walkthrough -j2 all
+uname -srmo
+cat /etc/os-release
+gcc --version
+ld --version
+getconf GNU_LIBC_VERSION
+gdb --version
+strace --version
+getconf PAGESIZE
+
+make -B -C labs/compiling-linking/walkthrough -j2 all
 cd labs/compiling-linking/output/program-execution-walkthrough
 ```
 
-需要 GCC、make、binutils；动态观测还需要 GDB、strace 和允许调试自己子进程的环境。不需要 root，不需要修改 ASLR 或系统配置。若 ptrace 被环境策略禁止，应明确说明限制，不把静态反汇编当作 GOT 已发生回填的证据。
+需要 GCC、make、binutils；动态观测还需要 GDB、strace 和允许调试自己子进程的环境。本次容器中的工具均已具备，GDB 与 strace 跟踪子进程均成功；无需安装依赖、root、关闭 ASLR 或修改容器安全配置。容器身份本身不保证允许 ptrace；若换到其他容器后被策略禁止，应明确说明限制，不把静态反汇编当作 GOT 已发生回填的证据。
 
 | 产物 | 构建意图 |
 |---|---|
@@ -70,166 +86,90 @@ cd labs/compiling-linking/output/program-execution-walkthrough
 
 <a id="overview"></a>
 
-## 1. 总览：程序运行前有哪些接力者【必讲】
+## 1. 实验文件与构建过程【必讲】
 
-面对实验目录中的 `.i`、`.s`、`.o`、`.a`、`.so`、可执行文件和日志，很容易把它们理解成“一堆由 gcc 生成的文件”，然后直接进入 ELF 字段的解释。但这样会缺少一个基本问题的答案：**这些文件分别处于什么阶段？哪些只是帮助构建，哪些在运行时还要用，谁负责把它们连接起来？**
+这个实验只有两个 C 源文件：`main.c` 使用计算模块，`calc.c` 提供实现。我们把同一个模块分别做成静态库和共享库，再生成两个可执行文件，比较代码、数据和外部引用的处理方式。
 
-本章先从启动一个程序的全景说起，再回过头辨认桌面上的每一份产物，最后实际走一遍编译链接过程。暂时不深入节头、符号项和重定位公式，先建立后续章节可以不断返回的路线图。
+先看文件放在哪里，再看它们之间的关系，最后按构建顺序打开各类产物。本章只选取理解文件所需的格式内容；完整 ELF 表项、重定位计算和启动过程留给后续章节。
 
-### 1.1 从输入命令到进入 main：先看完整接力
+### 1.1 实验目录
 
-假设我们已经完成前面的准备，现在在产物目录中执行：
-
-```bash
-./elf_shared
-```
-
-此时系统**不会重新编译 main.c，也不会逐个读取 main.i、main.s、main.o**。源代码构建成可执行文件，是之前已经完成的工作；这条命令发起的是另一个阶段：用已有的可执行文件启动程序。
-
-先将两个阶段放到同一张图上：
+实验位于仓库的 `labs/compiling-linking/`。下面列出与本文有关的目录和文件，省略部分后续实验产物：
 
 ```text
-构建阶段：把源码变成可以交给操作系统的文件
-
-  main.c + calc.h                    calc.c + calc.h
-         |                                  |
-  预处理、编译、汇编                  预处理、编译、汇编
-         |                                  |
-       main.o                       calc.o / calc.pic.o
-         |                                  |
-         |                       libcalc.a / libcalc.so
-         +---------------+------------------+
-                         |
-                  构建时链接编辑器
-                         |
-               elf_archive / elf_shared
-
-运行阶段：把文件变成正在执行的进程映像
-
-  shell 执行 ./elf_shared
-         |
-  在运行该命令的进程中发起 execve
-         |
-  内核检查 ELF，映射主程序和它指定的解释器
-  建立初始栈、auxv，设置用户态寄存器
-         |
-  返回用户态，先进入 ld.so 的入口
-         |
-  ld.so 加载 libcalc.so、libc 等依赖
-  完成必要重定位以及相关初始化
-         |
-  移交到主程序的 _start
-         |
-  libc 启动流程 -> main
-         |
-  正常返回后进入退出处理，最终结束进程
+labs/compiling-linking/
+├── src/
+│   ├── main.c                      主程序
+│   ├── calc.c                      计算函数和全局变量的定义
+│   ├── calc.h                      供两个源文件使用的接口声明
+│   └── makefile                    原始实验的构建脚本
+├── walkthrough/
+│   ├── Makefile                    本文使用的构建脚本，复用 src/ 源码
+│   ├── binding.c / binding.gdb      第 6 章的绑定实验与调试脚本
+│   └── library_init.c / startup.c  第 7 章的初始化实验
+└── output/
+    └── program-execution-walkthrough/
+        ├── main.i / main.s         保留下来的预处理结果与汇编文本
+        ├── main.o / calc.o         可重定位目标文件
+        ├── calc.pic.o              用于共享库的目标文件
+        ├── libcalc.a / libcalc.so  同一模块的两种库
+        ├── elf_archive / elf_shared
+        ├── elf_archive.map / elf_shared.map
+        └── chapter1/              本章分步操作的独立输出目录
 ```
 
-沿着运行阶段依次解释：
+`src/` 保存原始代码，`walkthrough/` 保存本文增加的实验和构建规则，`output/` 保存生成文件，不纳入版本控制。本文使用 `walkthrough/Makefile`，不需要到 `src/` 中执行原始 makefile。
 
-**第一棒是 shell，但 shell 不负责解析所有 ELF 结构。** 对这种含斜线的命令，shell 已经知道要执行的路径；通常准备子进程，再由运行该命令的进程执行 exec 系列操作。这里不限定 shell 必须调用哪个创建进程接口，关键是区分“创建进程”和“exec 替换进程映像”。成功的 execve 不会像普通函数那样回到旧程序的下一行。[R4]
+执行前面的“一次性准备”会生成树中的主线产物，以及后续用的 `bind_lazy`、`bind_now`、`startup` 等对照程序。`chapter1/` 则由本章手动建立，避免覆盖后续章节引用的产物；其中还会生成默认构建没有保留的 `calc.i`、`calc.s`。
 
-**第二棒是内核的 ELF 装载器。** 可执行文件不能只提供几段机器码，还要告诉内核：文件是什么架构、哪些范围要映射、权限是什么、入口在哪里、是否需要解释器。对于本例动态程序，内核既映射主程序，也映射它指定的动态链接器，随后先让动态链接器执行，而不是直接调用 main。
+目录中还可能看到以下文件，它们不是这条构建流程的必经产物：
 
-**第三棒是用户态动态链接器。** 此时主程序已经映射，但依赖的普通共享库还需要查找和装载，部分地址也要根据实际装载结果修补。ld.so 根据可执行文件留下的动态链接信息完成这些工作。若采用延迟绑定，部分函数的地址解析还可以留到首次调用，不是所有连接工作都必须在 main 之前一次完成。
+| 文件组 | 来源与用途 |
+|---|---|
+| `elf_fully_static`、`elf_stripped` | 单独构建或处理得到的完全静态、去符号对照程序 |
+| `loader.log`、`syscalls.log`、`entry.log`、`binding-*.log` 等 | 执行后续观察命令，保存动态链接器、strace 或 GDB 的输出 |
+| `*.stdout` | 保存某次运行的标准输出 |
 
-**第四棒是主程序的启动代码与 libc。** 动态链接器最终把控制权交给主程序入口；在本实验中，这个入口是 `_start`，不是 main。启动代码按 ABI 解释参数和栈，进入 libc 启动流程，再调用我们写的 main。构造函数的具体调用阶段在第 7 章用实验区分，这里先不把它们笼统归给某一棒。
+日志需要另外采集，重新 `make` 不会自动更新它们。先不用读这些文件，本章只关注上面目录树中的主线。
 
-如果执行的是 `./elf_archive`，运行流程仍然会经过动态链接器，因为它只把 **calc 模块**按归档方式链接进主程序，仍动态依赖 libc。完全静态版本的启动路径则没有本图中的外部解释器接力，后面单独对照。
+### 1.2 各类文件的作用
 
-可以把每一棒的交付物概括为：
+下面是源码到产物的逻辑关系。`calc.c` 有两条分支：普通对象用于静态归档，PIC 对象用于共享库。
 
-| 阶段 | 主要输入 | 交付结果 / 责任 |
+```text
+main.c + calc.h
+  └─ 预处理 → main.i ─ 编译 → main.s ─ 汇编 → main.o
+
+calc.c + calc.h
+  ├─ 预处理 → calc.i ─ 编译 → calc.s ─ 汇编 → calc.o
+  │                                              └─ ar → libcalc.a
+  └─ 以 -fPIC 预处理、编译、汇编 → calc.pic.o
+                                    └─ 共享链接 → libcalc.so
+
+main.o + libcalc.a  + 启动对象、系统库等 ─ 链接 → elf_archive
+main.o + libcalc.so + 启动对象、系统库等 ─ 链接 → elf_shared
+```
+
+这里的“编译”特指 C 到汇编这一步。日常说“编译项目”时，往往也包含预处理、汇编和链接。
+
+| 文件 | 保存什么，由谁使用 | 本例程序启动时是否需要读取 |
 |---|---|---|
-| 预处理、编译、汇编 | 每个 C 源文件及其包含的头文件 | 形成可链接的机器码、数据、符号与修补说明 |
-| 构建时链接 | `.o`、归档、共享对象及选项 | 生成 ELF 布局，解决能确定的引用，记录运行时需求 |
-| 内核装载 | 可执行文件、参数、环境 | 建立新的进程映像和启动协议 |
-| 用户态动态链接 | 已映射对象的动态信息、共享库 | 完成必要的运行时连接与部分初始化 |
-| 程序 / libc 启动 | 初始栈、入口和 main 等信息 | 建立 C 程序启动环境，调用 main 并处理正常退出 |
+| `.c`、`.h` | 人编写的源码与声明，供预处理和编译使用 | 否 |
+| `.i` | 展开头文件、宏和条件编译后的 C 文本，供编译器使用 | 否 |
+| `.s` | 目标架构的汇编文本，供汇编器使用 | 否 |
+| `.o`、`.pic.o` | 机器码、数据、符号、重定位等，供链接器使用 | 否 |
+| `.a` | 多个目标文件及索引的归档，供链接器选取成员 | 否，所需成员已纳入输出 |
+| `.so` | 经过链接的共享对象，构建时参与链接，运行时可被装载 | 共享版需要 `libcalc.so` |
+| `elf_archive`、`elf_shared` | 主程序的代码、数据和装载、动态链接信息 | 是，分别作为执行的主文件 |
+| `.map` | 链接器输出的文本报告，供人查看输入来源与输出布局 | 否 |
 
-**第一条主线：构建时在确定“文件里放什么、引用如何连接”；运行时在确定“映射到哪里、尚未解决的地址如何落实、从哪里开始执行”。** 两者有关联，但不是同一件事。
+所以，目录中的文件不都是“上一个文件换一种编码”。`.i`、`.s` 是不同层次的文本表示，`.o` 是带结构的二进制对象，`.a` 是对象的集合，`.so` 和可执行文件则是链接输出。
 
-> **截图位 S0-A：** 展示产物目录和一次 `./elf_shared` 的输出，旁边配上述流程图。先让听众认识“能跑的程序是最终产物”，不急着展示所有 ELF 字段。
+图中每一步也不要求留下一个永久文件。例如现有 Makefile 的 `gcc -c main.c` 会自行完成预处理、编译、汇编，不会去读取同目录已有的 `main.i`、`main.s`。下面把阶段拆开执行，是为了逐份观察。
 
-### 1.2 把实验文件逐个放回流程中
+### 1.3 文本文件：源码、预处理结果与汇编
 
-先看原始实验和本文复现实验中出现的主要文件族。这里把 `.map`、日志也列出来，是为了明确：**不是目录里每个文件都会参与程序运行，也不是每个文件都是上一步的机器码版本。**
-
-#### 1.2.1 主线产物：从源代码到可执行文件
-
-| 文件 | 它是什么 | 从哪里来 | 下一阶段如何使用 |
-|---|---|---|---|
-| `main.c` | 主程序的 C 源码 | 人编写 | 引用 calc 接口与 libc 输出函数，作为一个编译单元的起点 |
-| `calc.c` | calc 模块的 C 源码 | 人编写 | 提供函数和全局变量的定义，独立编译 |
-| `calc.h` | 接口头文件 | 人编写 | 被源文件包含，提供声明；本例不单独编译成 calc.h.o |
-| `main.i` / `calc.i` | 预处理后的 C 文本 | `gcc -E` | 交给 C 编译阶段；包含头文件展开结果和行标记 |
-| `main.s` / `calc.s` | 汇编文本 | `gcc -S` | 交给汇编器；含指令助记符、标签、数据和元信息指令 |
-| `main.o` / `calc.o` | ELF 可重定位目标文件 | 汇编阶段 | 交给链接器；包含机器码、数据、符号、重定位和本例的调试信息 |
-| `calc.pic.o` | 采用 PIC 代码生成方式的 ELF 目标文件 | `gcc -fPIC -c` | 用于构建共享库；不是另一种名叫 PIC 的文件格式 |
-| `libcalc.a` | 含 calc.o 的静态归档 | `ar rcs` | 链接器按需要提取成员，成员内容成为输出的一部分 |
-| `libcalc.so` | ELF 共享对象 | `gcc -shared` | 构建时参与检查与生成动态引用，运行时由动态链接器映射 |
-| `elf_archive` | 链接了 libcalc.a 的可执行 ELF | 链接 main.o 与显式指定的归档 | 内核执行它；calc 实现已在程序内，但仍需 libc |
-| `elf_shared` | 依赖 libcalc.so 的可执行 ELF | 链接 main.o 与共享库 | 内核执行它，ld.so 再装入 libcalc 和 libc |
-| `elf_archive.map` / `elf_shared.map` | 链接布局报告，文本 | 链接器的 `-Map` 选项 | 供人和分析工具阅读，不是程序运行时依赖 |
-
-原始实验的 `elf_static` 对应本文 `elf_archive` 的**构建意图**；改名是为了避免把“使用静态归档”误解为“整个程序完全静态”。是否真的选了 `.a` 仍须看命令和产物，不能根据文件名认定。
-
-原始实验已有 calc.i / calc.s；walkthrough 的默认 make 只额外保留了 main.i / main.s 来说明阶段。下面的分步实验会把 calc 的这两份文本产物也显式生成，因此不会把不存在的默认产物当作现成证据。
-
-辨认这些文件时，可以先分三类：
-
-```text
-给人阅读的文本表示：  .c / .h / .i / .s
-构建与运行的二进制：  .o / .a / .so / 可执行 ELF
-用于解释过程的报告：  .map / .log / .stdout
-```
-
-这个分类只是用途导读：例如 `.s` 虽然是文本，也是汇编器的正式输入；`.o` 虽然已有机器码，却不是操作系统可以直接当作普通程序启动的可执行文件。
-
-#### 1.2.2 同一份程序，为什么要保留多种表示
-
-`.i` 回答“编译器实际读到了怎样的 C 代码”。`#include "calc.h"` 展开后能看到 add 的声明，却不会因此把 calc.c 的函数实现也带进来。**声明解决编译阶段的接口认知，定义仍要在后续链接输入中提供。**
-
-`.s` 回答“C 运算被怎样表达成目标架构的操作”。可以看到函数标签、寄存器操作、`call add@PLT` 以及 `.section`、`.globl` 等汇编指令。此时能看到一个调用的符号名字，不代表它的最终目标地址已经确定。
-
-`.o` 回答“已经编码好的字节是什么，以及哪些引用仍待处理”。汇编器把文本指令编码成机器指令，并产生链接需要的符号、节和重定位信息。因此 `.s → .o` 不是简单把文件从文本编码换成二进制编码，而是在生成具有约定结构的目标文件。
-
-`.a` 与 `.so` 回答“怎样把模块交给其他程序使用”。前者是对象成员的归档，后者本身已是经过链接编辑的 ELF 共享对象。**把 calc.o 放进 `.a` 并不等于已经完成最终链接；把 calc.pic.o 链接成 `.so` 也不等于所有运行时地址都已经确定。**
-
-可执行 ELF 回答“怎样把这个程序交给操作系统启动”。它除了自己的代码和数据，还有装载说明；动态程序还包含依赖和运行时连接信息。**可执行，不等于不再依赖任何其他文件。**
-
-#### 1.2.3 后续实验产物与运行日志
-
-| 文件 | 对应哪个问题 | 是否是默认编译流水线的必经产物 |
-|---|---|---|
-| `binding.o`、`bind_lazy`、`bind_now` | 同一函数首次与再次调用，GOT 是否变化 | 否，是专门构建的对照程序 |
-| `library_init.o`、`startup.o`、`libcalc_init.so`、`startup` | 谁调用共享库和主程序的构造函数 | 否，是初始化顺序实验 |
-| `elf_fully_static` | 不依赖外部动态链接器的普通静态程序 | 否，需单独构建 optional-static |
-| `elf_stripped` | 去掉普通符号表后能否运行 | 否，是复制并 strip 的对照产物 |
-| `loader.log` | 动态链接器搜索、重定位与符号绑定过程 | 否，由运行时 LD_DEBUG 输出重定向得到 |
-| `loader.stdout` | 本例程序的标准输出 | 否，是一次运行的输出记录 |
-| `syscalls.log` | 用户态执行的相关系统调用 | 否，由 strace 采集 |
-| `entry.log`、`binding-*.log`、`startup-gdb.log` | 入口、GOT 或初始化调用栈观测 | 否，是保存的 GDB 输出 |
-| `startup.log` / `startup.stdout` | 初始化实验的链接器日志与程序输出 | 否，是该实验的运行记录 |
-
-这些日志不是 make 构建主程序时天然就会产生的文件；需要执行对应的观察命令。删除 map 或日志不会让程序失去实现；但删除 elf_shared 要依赖且没有其他可用副本的 libcalc.so，动态链接器就可能无法启动该程序。归档版本在构建完成后则不需要再打开 libcalc.a 来执行 add。
-
-### 1.3 再走一遍构建过程：每一步到底做了什么
-
-现在已经认识了产物，再把它们按因果关系排起来。先用一条简化流水线区分术语：
-
-```text
-.c --预处理--> .i --编译--> .s --汇编--> .o --链接--> 可执行 ELF
-                                                  ^
-                                                  |
-                                       其他 .o / .a / .so
-```
-
-这里“编译”采用狭义：把预处理后的 C 转为汇编表示。平时说“编译一下整个项目”则常把预处理、编译、汇编和链接都包括进去。本节固定使用前一种区分，避免说到同一个词时所指范围不同。
-
-#### 1.3.1 为分步观察建立独立目录
-
-以下命令从“一次性准备”结束后的产物目录执行。单独使用 chapter1，不覆盖后续章节已引用的 main.o、可执行文件或 map：
+以下命令接着“一次性准备”执行，此时位于 `output/program-execution-walkthrough/`：
 
 ```bash
 mkdir -p chapter1
@@ -237,105 +177,428 @@ cd chapter1
 SRC=../../../src
 ```
 
-`SRC` 指向仓库的实验源文件目录。后续构建命令依次在这个子目录中执行；本节末尾会回到上一级。
+`SRC` 指向实验的 `src/`。本章后续命令都在这个子目录、同一个 shell 中依次执行，章末再回到上一级。输出摘录来自这里重新生成的文件；文件偏移、节索引和指令地址可能随工具链或选项变化。
 
-#### 1.3.2 预处理：展开当前编译单元所需的文本
+#### 源码：main 知道接口，calc 提供定义
+
+先查看这三个文件：
+
+```bash
+cat "$SRC/calc.h" "$SRC/main.c" "$SRC/calc.c"
+```
+
+`calc.h` 中与本章主线有关的声明是：
+
+```c
+extern int global_counter;
+int add(int a, int b);
+```
+
+`main.c` 包含这个头文件，并使用这些名字。以下是其中两条语句，省略了中间的其他操作：
+
+```c
+printf("add(%d, %d) = %d\n", x, y, add(x, y));
+printf("global_counter = %d\n", global_counter);
+```
+
+`calc.c` 包含对应的定义，以下两处之间也省略了其他定义：
+
+```c
+int global_counter = 10;
+
+int add(int a, int b)
+{
+    return a + b;
+}
+```
+
+声明让编译器知道变量的类型、函数的参数和返回值；这里的定义才提供变量的存储与函数体。`main.c` 不需要读到 `calc.c` 就可以编译，但后续链接必须找到这些引用对应的定义。
+
+#### .i：包含头文件之后的 C 文本
 
 ```bash
 gcc -std=c11 -O0 -g -fPIE -E "$SRC/main.c" -o main.i
 gcc -std=c11 -O0 -g -fPIE -E "$SRC/calc.c" -o calc.i
-grep -n -A 9 'int main(void)' main.i
+grep -n -E 'calc.h|extern int global_counter|int add\(|int main\(' main.i
 ```
 
-`-E` 要求 GCC 停在预处理之后。头文件包含、宏展开和条件编译已经处理，注释通常不保留；输出仍然是 C 文本，而不是机器指令。
+`-E` 让 GCC 停在预处理之后。摘录如下，省略 grep 的行号和其他匹配行：
 
-本次 main.i 中仍可看到：
+```text
+# 1 "../../../src/calc.h" 1
+extern int global_counter;
+int add(int a, int b);
+int main(void)
+```
+对于代码:
 
 ```c
-int main(void)
-{
-    int x = 6;
-    int y = 7;
 
-    printf("%s\n", message);
-    printf("add(%d, %d) = %d\n", x, y, add(x, y));
+#include "calc.h"
+
+/* main.o 自己的已初始化数据 */
+static int local_data = 100;
+
+/* main.o 自己的只读数据 */
+static const char message[] = "ELF compilation and linking laboratory";
+
 ```
 
-行号由 `grep` 给出，具体数值会随系统头文件变化，正文省略。附近的 `# 行号 "文件名"` 是源位置标记，不是待执行的 C 语句。
+经过预处理展开后将变成：
 
-main.c 和 calc.c 各自形成独立编译单元。main.i 中有 calc.h 的声明，不意味着编译器已经读过 calc.c 并决定 add 应放在哪个最终地址。对一般构建而言，跨单元连接是后面链接器的任务；LTO 等跨单元优化不在这条基础流水线中展开。
+```text
+# 4 "../src/calc.h"
+extern int global_counter;
+extern int uninitialized_value;
 
-#### 1.3.3 编译：从 C 语义转为目标架构的汇编表示
+int add(int a, int b);
+int multiply(int a, int b);
+void update_counter(int value);
+# 3 "../src/main.c" 2
+
+
+static int local_data = 100;
+
+
+static const char message[] = "ELF compilation and linking laboratory";
+```
+打开完整 `main.i`，还能看到 `stdio.h` 展开后的大量声明，以及原来的 `main` 函数体。`# 行号 "文件名"` 记录源位置，供后续诊断和调试使用，不是待执行的语句。
+
+此时 `#include "calc.h"` 已被展开，但 `add` 仍只有声明：预处理不会自动查找并合入 `calc.c` 的实现。每个源文件经过预处理后形成各自的编译单元。
+
+#### .s：用汇编表示代码与数据
 
 ```bash
 gcc -std=c11 -Wall -Wextra -Wpedantic -O0 -g -fPIE -S main.i -o main.s
 gcc -std=c11 -Wall -Wextra -Wpedantic -O0 -g -fPIE -S calc.i -o calc.s
-grep -n -E 'main:|call.*(add|printf)|\.section|\.globl' main.s
+grep -n -B 5 -A 3 'call.*add@PLT' main.s
 ```
 
-输入后缀 `.i` 告诉 GCC 这是预处理后的 C 输入；`-S` 停在生成汇编文本后。本次能看到 main 标签，以及 `call add@PLT`、`call printf@PLT` 等调用。
+输入 `.i` 表示已预处理的 C 文本，`-S` 要求输出汇编。本次调用 `add` 附近的内容如下，省略 grep 行号：
 
-这一阶段需要理解变量类型、表达式、控制流和调用约定，并把它们落实成当前架构上的寄存器、栈和指令操作。`-O0` 便于阅读，`-g` 请求生成调试信息；二者不是“禁止一切转换”或“启动程序必需”的选项。
+```asm
+	.loc 1 16 5
+	movl	-4(%rbp), %edx
+	movl	-8(%rbp), %eax
+	movl	%edx, %esi
+	movl	%eax, %edi
+	call	add@PLT
+	movl	%eax, %ecx
+    .loc 1 16 5 is_stmt 0 discriminator
+     movl    -4(%rbp), %edx
+```
 
-汇编中同时存在两种东西：`call`、`mov` 等描述机器指令，`.section`、`.type`、`.loc` 等用于指导汇编器组织数据和元信息。不能把每一行汇编文本都当成 CPU 将执行的一条指令。
+这是 x86-64 的 AT&T 汇编语法，源操作数在前、目的操作数在后。这里先从栈中取出 `y`、`x`，将两个整数参数放进 `%esi`、`%edi`，调用后从 `%eax` 取得返回值。
 
-#### 1.3.4 汇编：得到机器码，也留下尚未确定的引用
+`call`、`movl` 会被编码成机器指令；`.loc` 是源位置指令，供汇编器生成调试信息，不会作为 CPU 指令执行。文件中的 `.section`、`.globl` 等也属于组织内容、描述符号的汇编器指令。
+
+`add@PLT` 表达一种针对 `add` 的调用引用，此时还没有给出最终调用位移。它也不保证最终一定经过 PLT：链接器找到本地定义后可以直接连接到函数，第三章会检查这个结果。
+
+```asm
+.loc 1 16 5 is_stmt 0 discriminator 1
+```
+是 GNU 汇编器 GAS 的伪指令，用于生成 DWARF 源码行号调试信息。它不属于 CPU 指令，不会实际执行，而是告诉汇编器， 接下来的汇编指令对应源文件编号 1 的第 16 行、第 5 列。  
+
+格式为
+
+```
+.loc 文件编号 行号 [列号] [选项]
+```
+
+本实验用 `-O0` 便于观察代码、`-g` 保留调试信息；`-fPIE` 为位置无关可执行文件生成代码。`-O0` 不代表源码调用绝不会转换，例如本例 GCC 仍将一处 `printf` 转成了 `puts`。
+
+### 1.4 .o：有机器码，但还需要链接
+
+#### ELF 头和节：怎样找到文件里的内容
+
+把汇编文本交给汇编器：
 
 ```bash
 gcc -c main.s -o main.o
 gcc -c calc.s -o calc.o
 file main.o calc.o
-nm main.o calc.o
+readelf -hW main.o
 ```
 
-这里输入是 `.s`，GCC 驱动调用汇编器；`-c` 要求不做最终链接。汇编器将指令编码成字节，组织节、符号与重定位等结构，输出 ELF 可重定位文件。
+这里 `gcc` 根据 `.s` 后缀调用汇编器，`-c` 表示不继续链接。`file` 将两个输出识别为 ELF 64 位、小端、x86-64 的可重定位文件。`main.o` 的 ELF 头部分摘录如下：
 
-本次 nm 的部分结果：
+```text
+Class:                             ELF64
+Data:                              2's complement, little endian
+Type:                              REL (Relocatable file)
+Machine:                           Advanced Micro Devices X86-64
+Entry point address:               0x0
+Start of section headers:          3952 (bytes into file)
+Number of section headers:         23
+```
+
+ELF 是这里目标文件、共享库和可执行文件共同采用的格式。文件开头的 ELF 头说明如何解释后续内容：位数、字节序、目标架构，以及其他表的位置。`REL` 对应 `ET_REL`，表示它还要参与链接，不是可以直接启动的普通程序。
+
+目标文件按用途把内容分成节（Section）。节头表为每个节记录类型、位置、大小等信息，工具先找到这张表，再定位所需内容：
+
+```text
+ELF 头 ──记录节头表的文件偏移──→ 节头表
+                                 ├─ .text 的描述 ──→ 指令字节
+                                 ├─ .data 的描述 ──→ 已初始化数据
+                                 ├─ .symtab 的描述 → 符号记录
+                                 └─ 其他节的描述   → 相应内容或空间需求
+```
+
+这是引用关系图，不表示这些内容必须按图中的顺序排列。继续查看节头表：
+
+```bash
+readelf -SW main.o
+readelf -SW calc.o
+```
+
+下面从本次 `main.o` 中选取几行，只保留部分列；`Off`、`Size` 为十六进制：
+
+```text
+[Nr] Name        Type       Off    Size
+[ 1] .text       PROGBITS   000040 0000cf
+[ 2] .rela.text  RELA       000a08 000180
+[ 3] .data       PROGBITS   000110 000004
+[ 4] .bss        NOBITS     000114 000000
+[ 5] .rodata     PROGBITS   000120 00007f
+[20] .symtab     SYMTAB     0007b8 0001e0
+[21] .strtab     STRTAB     000998 00006b
+```
+
+`.text` 保存函数的指令字节，`.data` 保存本例的已初始化可写数据，如 `local_data = 100`；`.rodata` 保存只读数据，如 `message` 字符串。`.symtab` 是符号表，`.strtab` 保存它引用的符号名字符串，`.rela.text` 则记录 `.text` 中待重定位的位置。
+
+`.bss` 用于本例需要零初始化的静态存储期对象。它的类型是 `NOBITS`：记录空间大小，但不在文件里存放同等大小的全零字节。`main.o` 的 `.bss` 大小为 0，因为 `uninitialized_value` 定义在 `calc.c`，要到 `calc.o` 中查看。
+
+这里的文件偏移和运行地址是两件事。例如 `.text` 的 `Off=0x40` 表示从文件开头数 64 字节处开始读取，不是说 CPU 会从地址 `0x40` 执行它。
+
+| 编号 | Section | 类型 | 主要作用 | 是否进入运行时内存 |
+|---|---|---|---|---|
+| 0 | NULL | 空 Section | ELF 规范保留的无效占位项。索引 0 通常表示未定义 Section，例如符号表中的 UND。 | 否 |
+| 1 | .text | PROGBITS | 保存函数编译后生成的机器指令，例如 add、sub 等函数的代码。具有 A 和 X 属性，表示需要分配内存且可执行。 | 是 |
+| 2 | .rela.text | RELA | 保存针对 .text 的重定位记录，告诉链接器需要修正哪些函数调用、全局变量访问或只读数据引用。 | 否，链接时使用 |
+| 3 | .data | PROGBITS | 保存具有非零初始值的可写全局变量和静态变量。具有 W 和 A 属性。 | 是 |
+| 4 | .bss | NOBITS | 保存未初始化或初始化为零的全局变量和静态变量。只记录所需内存大小，不在文件中保存实际零值。 | 是，由加载器置零 |
+| 5 | .rodata | PROGBITS | 保存字符串字面量、只读常量和跳转表等只读数据。具有 A 属性，没有 W 属性。 | 是 |
+| 6 | .debug_info | PROGBITS | DWARF 调试信息的核心，描述源文件、函数、变量、参数、类型以及变量位置等信息。 | 否 |
+| 7 | .rela.debug_info | RELA | 保存针对 .debug_info 的重定位记录，修正其中引用的代码地址、数据地址及其他调试 Section。 | 否，链接时使用 |
+| 8 | .debug_abbrev | PROGBITS | 保存 .debug_info 中 DIE 调试条目的结构模板，用于减少重复字段定义。 | 否 |
+| 9 | .debug_aranges | PROGBITS | 保存代码地址范围到编译单元的快速索引，帮助调试器判断某个地址属于哪个源文件编译单元。 | 否 |
+| 10 | .rela.debug_aranges | RELA | 保存针对 .debug_aranges 的重定位记录，修正其中尚未确定的代码地址范围。 | 否，链接时使用 |
+| 11 | .debug_line | PROGBITS | 保存机器指令地址与源文件、行号和列号之间的映射，用于断点和源码级单步调试。 | 否 |
+| 12 | .rela.debug_line | RELA | 保存针对 .debug_line 的重定位记录，修正行号信息中引用的代码地址或其他 Section。 | 否，链接时使用 |
+| 13 | .debug_str | PROGBITS | DWARF 通用字符串池，保存函数名、变量名、类型名、编译器信息和路径等字符串。 | 否 |
+| 14 | .debug_line_str | PROGBITS | 专门供 DWARF 行号表使用的字符串池，通常保存源文件名、目录名和编译工作路径。 | 否 |
+| 15 | .comment | PROGBITS | 保存编译器版本或工具链标识等说明字符串，不影响程序执行。 | 否 |
+| 16 | .note.GNU-stack | PROGBITS | 告诉链接器当前目标文件是否要求可执行栈。没有 X 标志通常表示不要求可执行栈。 | 不直接装载，用于决定栈权限 |
+| 17 | .note.gnu.property | NOTE | 保存 GNU 平台属性或体系结构安全特性，例如 ISA 要求、CET、IBT 或 Shadow Stack 等。具体内容可通过 readelf -n 查看。 | 通常保留，并可能映射到内存 |
+| 18 | .eh_frame | PROGBITS | 保存调用帧展开信息，说明如何恢复栈指针、返回地址及保存的寄存器，用于异常处理、栈回溯和调试。 | 是 |
+| 19 | .rela.eh_frame | RELA | 保存针对 .eh_frame 的重定位记录，修正其中引用的函数起始地址和代码范围。 | 否，链接时使用 |
+| 20 | .symtab | SYMTAB | 完整静态符号表，记录函数、变量、Section 和未定义外部符号的名称索引、类型、绑定属性、所属 Section、大小及地址。 | 否，链接和调试时使用 |
+| 21 | .strtab | STRTAB | .symtab 使用的字符串表，保存函数名、变量名和文件名等符号名称。 | 否 |
+| 22 | .shstrtab | STRTAB | Section Header String Table，保存 .text、.data、.symtab 等全部 Section 的名称。 | 否 |
+
+这里还有一些sections没有出现：  
+
+| calc.o 中的信息 | 链接器处理后可能形成 |
+|---|---|
+| .symtab 中的未定义动态符号 | .dynsym 中的导入符号 |
+| .strtab 中相关符号名 | .dynstr 中的动态字符串 |
+| .rela.text 中的函数调用重定位 | .plt、.got.plt、.rela.plt |
+| .rela.text 中的数据地址重定位 | .got、.rela.dyn |
+| 链接命令指定的共享库 | .dynamic 中的 DT_NEEDED |
+| 动态链接器路径 | .interp 和 PT_INTERP |
+| GOT、PLT及动态符号表的位置 | .dynamic 中的 DT_* 条目 |
+
+这类sections将由ld生成。  
+
+#### Symbol Table：引用与定义怎样对应
+
+```bash
+readelf -sW main.o calc.o
+```
+
+从两个文件中各取几条记录，省略符号编号和 `Vis` 列：
 
 ```text
 main.o:
-                 U add
-                 U global_counter
-0000000000000000 T main
+Value             Size Type    Bind   Ndx Name
+0000000000000000   207 FUNC    GLOBAL   1 main
+0000000000000000     0 NOTYPE  GLOBAL UND add
+0000000000000000     0 NOTYPE  GLOBAL UND global_counter
 
 calc.o:
-0000000000000000 T add
-0000000000000000 D global_counter
-0000000000000000 B uninitialized_value
+Value             Size Type    Bind   Ndx Name
+0000000000000000    24 FUNC    GLOBAL   1 add
+0000000000000000     4 OBJECT  GLOBAL   3 global_counter
 ```
 
-这几行已经展示了为什么还需要链接：main.o 引用了 add 和 global_counter，但没有提供它们的定义；calc.o 提供了相应定义。`T/D/B` 分别帮助识别本例的代码、已初始化数据和 BSS 符号，`U` 表示本文件中未定义。
+`main.o` 中的 `UND` 表示本文件没有定义这个符号；`calc.o` 中 `add` 的 `Ndx=1` 指向该对象的 `.text`，`global_counter` 的 `Ndx=3` 指向 `.data`。`FUNC`、`OBJECT` 分别标记函数和数据对象；本例的 `GLOBAL` 绑定允许它们参与跨对象的符号解析。
 
-这些值为 0 并不表示运行时所有对象都挤在同一个地址。此时尚在 ET_REL 语境，普通定义的值要结合所在节解释；第二章会把 nm 的简写对应回完整 ELF 符号表。
+对这里 ET_REL 中的普通定义，`Value` 是所在节内的偏移。`add` 和 `global_counter` 都为 0，是因为各自在自己的节开头，不是两者运行时共用地址 0。`UND` 记录的 0 则不是定义位置，也不表示读取变量会得到 0。
 
-> **截图位 S0-B：** 并排显示 main.i 中的调用、main.s 中的 `call add@PLT`、main.o / calc.o 的 nm 结果。讲清“C 调用 → 汇编符号引用 → 对象定义与未定义引用”，而不是一上来展示所有二进制结构。
+链接器正是借助这些记录，知道 `main.o` 需要哪些定义，以及 `calc.o` 能提供什么。
 
-#### 1.3.5 两条库分支：归档与共享对象
+#### 重定位：哪几个字节还需要修改
 
-先把 calc.o 收进静态归档：
+符号表说明引用了谁，但还需要知道指令中哪里使用了这个引用：
+
+```bash
+objdump -dr main.o
+readelf -rW main.o
+```
+
+`objdump -dr` 同时显示反汇编和重定位信息。调用 `add` 的两行是：
+
+```text
+33: e8 00 00 00 00    call 38 <main+0x38>
+    34: R_X86_64_PLT32 add-0x4
+38:   89 c1                   mov    %eax,%ecx
+```
+`call rel32`指令最终目标地址的计算逻辑为：
+
+```
+目标地址 = 下一条指令地址 + 32号有符号位移（即四个字节相对位移）
+```
+
+这里需要ralocate的位移则为
+```
+32位有符号位移 = 目标地址 - 下一条指令地址 = 目标地址 - 0x38
+```
+
+链接器计算地址时，对于R_X86_64_PLT32, 需要填入的地址为
+```
+L + A - P
+```
+
+之所以是这个公式是因为：  
+L: add对应的plt入口地址，即目标地址
+P: 被重定位字段的地址，这里是0x34
+A: 为了得到正确的结果还需要加上的附加值，这里最终需要填入的地址是 L - 0x38, 所以A = -4
+
+左边的 `0x33` 是 `.text` 节内偏移；`e8` 是调用指令的操作码，后面四个字节保存相对位移。此时这四个字节仍为 0，所以单看反汇编会显示跳到下一条指令，而不是最终的 `add`。
+
+重定位记录补充了实际含义：
+
+| 记录内容 | 对这条调用的意义 |
+|---|---|
+| `0x34` | 从 `.text` 节内偏移 `0x34` 开始修补，即操作码之后的位移字段 |
+| `add` | 计算时引用的符号 |
+| `R_X86_64_PLT32` | 本架构规定的重定位类型，指定计算与编码规则 |
+| `-4` | 参与计算的加数，不是 `add` 的地址 |
+
+所以 `.o` 中已经有调用指令，但调用目标尚未落实到正确的位移字节。第二章继续解释表项之间的索引关系，第三章再根据链接后的布局计算这个位移。
+
+### 1.5 库文件：.a 与 .so 的内容不同
+
+#### .a：把目标文件归档
 
 ```bash
 ar rcs libcalc.a calc.o
 ar t libcalc.a
+nm -s libcalc.a
 ```
 
-`ar` 不负责为 main.o 选择 add 的最终调用目标，它在这里创建 / 更新归档，并建立便于按符号查找成员的索引。main.o 还没有参与这条命令，最终可执行文件也尚未生成。
+`ar t` 列出归档成员，本例只有：
 
-共享库分支则重新以 PIC 方式编译 calc.c，然后链接为共享对象：
+```text
+calc.o
+```
+
+`nm -s` 还会显示归档索引，部分结果为：
+
+```text
+Archive index:
+global_counter in calc.o
+uninitialized_value in calc.o
+add in calc.o
+
+calc.o:
+0000000000000000 T add
+0000000000000000 D global_counter
+0000000000000004 d internal_state
+```
+
+索引告诉链接器哪个成员可能提供所需符号。`libcalc.a` 本身是 `ar` 归档，不是一个新的 ELF 可执行文件；其中的 `calc.o` 仍是刚才的可重定位对象。
+
+执行 `ar` 时还没有输入 `main.o`，也没有安排最终程序的地址。最终链接时，链接器根据未定义引用提取所需成员；本例提取的是整个 `calc.o`，不是只复制 `add` 函数。
+
+#### .so：把 PIC 对象链接成共享对象
 
 ```bash
 gcc -std=c11 -Wall -Wextra -Wpedantic -O0 -g -fPIC \
   -c "$SRC/calc.c" -o calc.pic.o
-gcc -shared calc.pic.o -Wl,-soname,libcalc.so -o libcalc.so
+gcc -shared calc.pic.o \
+  -Wl,-soname,libcalc.so \
+  -Wl,-Map,libcalc.map \
+  -Wl,--cref \
+  -o libcalc.so
+file calc.pic.o libcalc.a libcalc.so
+readelf -hW libcalc.so
+readelf --dyn-syms -W libcalc.so
 ```
 
-`-fPIC` 控制代码生成；`-shared` 控制链接输出为共享对象，二者不是同一个层面的选项。这里直接从源码构建 PIC 对象，也避免复用按另一组预处理条件生成的 `.i` 时混淆选项的作用范围。
+使用-fPIC编译的可重定位文件和不使用该参数的区别如下：  
 
-`.pic.o` 中的 `pic` 只是人为命名，帮助区分两种代码生成结果；它依然是 `.o` 类型的 ELF。共享库也不是“把普通文件改个 .so 后缀”，它需要经过链接，形成自己的布局与动态信息。
+符号类型 | 非 PIC 可重定位文件 | PIC 可重定位文件 | 关键差异 |
+|---|---|---|---|
+| 局部变量、函数参数 | 栈或寄存器 | 栈或寄存器 | 通常无差异 |
+| 文件内 static 数据 | 通常 RIP 相对直接访问 | 通常仍是 RIP 相对直接访问 | 相对位置固定，无需 GOT |
+| 字符串常量 | 通常 RIP 相对引用 .rodata | 通常仍是 RIP 相对引用 .rodata | 相对位置固定，无需 GOT |
+| static 函数 | PC 相对直接调用 | 通常仍是 PC 相对直接调用 | 不可被外部抢占，无需 PLT |
+| hidden 函数或数据 | PC/RIP 相对直接引用 | PC/RIP 相对直接引用 | 已知绑定在当前共享对象内部 |
+| 默认可见全局变量 | 可直接使用 RIP 相对访问 | 通常通过 GOT 间接访问 | PIC 需支持运行时符号抢占 |
+| 外部全局变量 | 可由链接器直接修正引用 | 通常通过 GOT 间接访问 | 实际地址需要运行时确定 |
+| 默认可见全局函数 | 通常产生 PLT32 重定位 | 通常通过 PLT 调用 | 可能被其他 ELF 对象抢占 |
+| 外部函数 | 通常产生 PLT32 重定位 | 通常通过 PLT/GOT 调用 | 实际实现可能来自共享库 |
+| 函数或变量地址 | 链接器可写入地址或相对值 | 可抢占符号通常经 GOT，局部符号可用 RIP 相对 lea | 取地址也必须遵守绑定语义 |
 
-#### 1.3.6 链接：形成一个完整的构建时输出
+```asm
 
-分别生成归档版本与共享版本：
+# 访问 global_counter
+# 普通版本
+# 访问路径为 指令 → global_counter的值
+3a: mov 0x0(%rip),%edx
+
+# pic版本
+# 访问路径为 指令 → GOT槽位 → global_counter地址 → global_counter值
+3a: mov 0x0(%rip),%rax
+41: mov (%rax),%edx
+```
+普通版本直接把结果写向 RIP 相对目标；PIC 版本先从 GOT 获取变量地址，再间接写入。  
+
+对于pic,对于能确定绑定在当前共享对象内部的符号，只需保持相对位置固定并使用 RIP/PC 相对寻址；对于装载地址和最终符号绑定都可能在运行时确定的全局符号，则通过 GOT 或 PLT 间接访问。
+
+```text
+calc.c
+  │ GCC编译、汇编：-c -fPIC
+  ▼
+calc.pic.o                         ELF可重定位目标文件
+  │ 静态链接器处理：-shared
+  ▼
+libcalc.so                         ELF共享对象
+```
+
+g-fPIC` 生成位置无关代码，使共享库能在不同装载地址使用；它控制代码生成方式，不改变 `.o` 的文件格式。`calc.pic.o` 依然是 ET_REL，名字中的 `pic` 只是为了与另一份对象区分。
+
+`-shared` 则要求链接器输出共享对象。本次 `libcalc.so` 的头与动态符号表部分内容如下，符号表省略编号和可见性：
+
+```text
+Type:                              DYN (Shared object file)
+Entry point address:               0x0
+
+Value             Size Type    Bind   Ndx Name
+00000000000010f9    24 FUNC    GLOBAL  10 add
+0000000000004008     4 OBJECT  GLOBAL  20 global_counter
+```
+
+首先，让我们先对比shared object (.so) 和 relocatable file (.o)文件结构上的区别，再借助.map尝试理解这个转换过程。  
+
+生成共享库并不意味着所有地址都已确定。它如何通过位置无关寻址、GOT 和动态重定位适应装载地址，第六章再展开。
+
+### 1.6 可执行文件与链接报告
+
+#### 链接：选择实现来源并形成输出布局
+
+有了 `main.o` 和两种库，分别生成两个程序指令 → GOT槽位 → global_counter地址 → global_counter值：
 
 ```bash
 gcc -pie main.o ./libcalc.a \
@@ -348,39 +611,102 @@ gcc -pie main.o ./libcalc.so \
   -o elf_shared
 ```
 
-先抓住三件事，后面再深入：
+这里显式写出 `.a` 和 `.so`，不使用 `-lcalc`，避免库搜索优先级改变对照结果。原始实验中的 `elf_static` 只有“使用 calc 静态库”的意图，本文命名为 `elf_archive`，因为它仍然动态依赖 libc。
 
-**符号解析：引用谁，定义在哪里。** 对归档版本，链接器从 libcalc.a 提取所需成员，为 main.o 的 calc 符号引用找到定义。对共享版本，它读取 libcalc.so 的动态符号等信息，将必要的运行时需求记录到输出。printf / puts 的 libc 来源也由构建时和运行时两部分协作处理，不是每个未定义引用都必须在构建时变成一个固定运行时绝对地址。
+`gcc` 是工具链驱动：根据输入和选项调用工具，链接时还自动加入启动对象与系统库。上面的显式输入不是全部输入；我们只写了 `main`，启动入口仍由启动对象提供。
 
-**布局：输入如何组织成输出。** 多份对象中的代码、数据和其他内容按链接规则组织进输出节，再形成满足装载要求的段。链接器还结合对齐、脚本和选项安排地址；不是简单执行 `cat main.o calc.o`。
+构建时的链接器（这里是 GNU ld）要查找符号定义、组织输出节和地址，并完成能确定的重定位。它既能处理归档，也能生成共享库和动态程序；“静态链接器”不表示它只会处理静态库。运行时的动态链接器则是另一份程序。
 
-**重定位：把已经能确定的连接落实到字节。** 构建时能够确定的位移等会写入相应位置；仍依赖实际装载地址或运行时符号查找的部分，则通过动态重定位等信息交给后续处理。第三章会对 add 的调用位移作具体计算。
+命令中，`-pie` 生成位置无关可执行文件，与前面的 `-fPIE` 配合；`-Wl,` 后的参数传给链接器。`-Map` 输出布局报告；`-z relro`、`-z now` 固定本例的保护和绑定策略，第六章再用独立程序对比延迟绑定。`-rpath` 与 new dtags 生成的查库信息在下面查看。
 
-上面命令中的选项也按职责区分：
+#### 可执行 ELF：除了代码，还有装载说明和依赖
 
-| 选项 | 本次用途 |
-|---|---|
-| `-pie` | 生成 PIE 主程序，与编译阶段的 `-fPIE` 配合 |
-| 显式 `./libcalc.a` / `./libcalc.so` | 固定比较的库种类，不让同目录库搜索优先级改变实验 |
-| `-Wl,参数` | 由 GCC 驱动把后面的逗号分隔参数转交链接器 |
-| `-Map,...` | 同时生成可供阅读的链接布局报告 |
-| `-rpath,'$ORIGIN'` 与 new dtags | 本次生成 RUNPATH，使运行时能在程序目录找到 libcalc.so |
-| `-z relro` / `-z now` | 明确本例保护和绑定策略，后面用独立实验对比 lazy |
+```bash
+readelf -hW elf_shared
+readelf -lW elf_shared
+```
 
-此时使用的 `gcc` 依然是**驱动程序**：它按输入后缀、选项组织相关工具，也会加入通常需要的 CRT 启动对象、库及链接参数。main.o 并不是最终命令的全部隐含输入；没有手写 `_start` 也能生成程序，正是因为有启动对象参与。
+头部显示本例主程序也是 `DYN`，入口为 `0x10e0`：
 
-“静态链接器”指这里构建时的链接编辑器，例如 GNU ld。它既能生成采用归档的程序，也能生成动态链接程序和共享对象；不要把“静态链接器”和“只接受静态库”画等号。运行时的动态链接器是另一份程序，不是这个构建命令又在程序启动时重新执行了一遍。
+```text
+Type:                              DYN (Position-Independent Executable file)
+Entry point address:               0x10e0
+```
 
-#### 1.3.7 运行并核对：名字之外还要看证据
+PIE 主程序和普通共享库都使用 `ET_DYN`，但用途不同，不能只看类型就认定它是库。这里的入口值要结合装载地址解释，也不是 `main` 的运行时地址。
+
+`readelf -lW` 读取程序头表。下面摘录解释器和可执行装载段，保留列标题：
+
+```text
+Type    Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+INTERP  0x000318 0x0000000000000318 0x0000000000000318 0x00001c 0x00001c R   0x1
+    [Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
+LOAD    0x001000 0x0000000000001000 0x0000000000001000 0x0002a5 0x0002a5 R E 0x1000
+```
+
+与节头表按内容分类不同，程序头表描述装载和执行所需的信息。`LOAD` 指定一段（Segment）映射范围，包括文件偏移、虚拟地址、文件与内存大小、权限和对齐；这里 `R E` 表示可读、可执行。这段包含 `.text` 等多个节，并不是一个节对应一个段。
+
+`INTERP` 指定程序解释器，本例是动态链接器。第四章会对照完整的节、段映射；这里先知道，可执行文件提供了让内核建立进程映像的说明，不只是机器码。
+
+再看动态依赖：
+
+```bash
+readelf -dW elf_archive | grep NEEDED
+readelf -dW elf_shared | grep -E 'NEEDED|RUNPATH'
+```
+
+两条命令依次得到：
+
+```text
+0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+```
+
+```text
+0x0000000000000001 (NEEDED)             Shared library: [libcalc.so]
+0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+0x000000000000001d (RUNPATH)            Library runpath: [$ORIGIN]
+```
+
+这些是 ELF 动态信息中的记录，不是额外的配置文件。`NEEDED` 说明依赖的共享库；本例 `RUNPATH` 中的 `$ORIGIN` 由动态链接器展开为程序所在目录，用来找到旁边的 `libcalc.so`。命令中的单引号防止 shell 提前展开它。
+
+两个程序都依赖 libc，所以 `elf_archive` 不是完全静态程序。它不需要运行时再打开 `libcalc.a`；`elf_shared` 则仍需要可找到的 `libcalc.so`。
+
+#### .map：检查链接器实际选了什么
+
+```bash
+head -n 10 elf_archive.map
+nm elf_archive elf_shared | grep -E '^elf_| add$'
+```
+
+map 开头的成员纳入记录为：
+
+```text
+Archive member included to satisfy reference by file (symbol)
+
+./libcalc.a(calc.o)           main.o (global_counter)
+```
+
+这条记录说明链接器为了满足 `main.o` 对 `global_counter` 的引用，纳入了 `calc.o`；该成员同时带来了 `add` 等定义。后续 map 内容还能查看输出节布局和符号位置。它是可直接阅读的文本报告，运行程序不需要它。
+
+`nm` 的结果进一步显示 `add` 在两个主文件中的差别：
+
+```text
+elf_archive:
+0000000000001238 T add
+elf_shared:
+                 U add
+```
+
+归档版本已在自己的代码中定义 `add`；共享版本仍保留未定义引用，由动态链接关联到共享库中的实现。`T` 是 `nm` 对代码符号的简写，`U` 表示未定义，不表示这个已经成功链接的动态程序缺少了实现。
+
+最后运行：
 
 ```bash
 ./elf_archive
 ./elf_shared
-readelf -dW elf_archive
-readelf -dW elf_shared
 ```
 
-本次两个版本都得到：
+两个版本都输出：
 
 ```text
 ELF compilation and linking laboratory
@@ -390,29 +716,30 @@ global_counter = 110
 uninitialized_value = 3
 ```
 
-但动态依赖不同：归档版本只记录本例所需的 libc 依赖；共享版本还记录 libcalc.so，并带 `$ORIGIN` RUNPATH。**相同输出只说明这个输入下的可见行为一致，不说明代码放置位置和启动过程相同。**
+输出相同，但 `add` 的实现位置和运行依赖不同：一个已经纳入主程序，另一个留在 `libcalc.so`。
 
-手动分步实验到此结束，回到正文其余实验使用的产物目录：
+### 1.7 从构建产物到程序运行
+
+构建到这里已经完成。执行 `./elf_shared` 时，不会重新编译源码，也不会依次读取 `.i`、`.s`、`.o` 和 `.a`。对于本例动态程序，接下来的过程简述为：
+
+```text
+执行 elf_shared，发起 execve
+  → 内核根据 ELF 程序头映射主程序和解释器
+  → 动态链接器装入依赖库，完成必要的重定位
+  → 主程序入口 _start
+  → libc 启动流程
+  → main
+```
+
+`elf_archive` 因为仍依赖 libc，也需要动态链接器。完全静态程序没有这里的外部解释器步骤，第五至七章会具体观察装载、初始化和进入 `main` 的过程。
+
+本章分步操作结束，回到后续章节使用的产物目录：
 
 ```bash
 cd ..
 ```
 
-这里展示的持久文件链是为了观察而刻意展开的。原 walkthrough makefile 的 `gcc -S main.c` 会自行先做预处理，`gcc -c main.c` 会自行完成预处理、编译和汇编；它们不要求之前已经生成 main.i 或 main.s。一次普通 gcc 构建也可能使用临时文件或管道，不保证把所有中间文本留在目录中。**阶段的逻辑先后，不等于磁盘上必须永久保存同名的每一份中间文件。**
-
-### 1.4 带着这张地图进入 ELF
-
-到这里，我们已经可以对产物提出更具体的问题：
-
-| 已有认识 | 后续要解释的问题 |
-|---|---|
-| `.o` 同时包含代码、定义与未完成引用 | ELF 怎样描述它们，工具怎样找到相应表项？ |
-| 链接器要解析、布局和重定位 | 如何把 add 的符号引用落实成一条正确调用？ |
-| 可执行文件要向内核说明装载要求 | Section 和 Segment 为什么同时存在？ |
-| 动态程序仍有运行时未决事项 | 依赖、符号表、GOT / PLT 和重定位怎样协作？ |
-| 程序入口不是 main | execve、ld.so、`_start` 和 libc 怎样接力？ |
-
-CPU 最终执行的是已经建立正确寻址关系的指令，而不是识别字符串“add”后自己去找某个 C 文件。第二章从 main.o 开始，看看这份“已有机器码、但仍可继续链接”的文件究竟怎样表达这些需求。
+接下来第二章继续查看 `main.o`：把本章见过的节、符号和重定位记录对应起来，再进入第三章，计算链接器究竟向那条 `call` 指令写入了什么。
 
 <a id="object-files"></a>
 
@@ -907,10 +1234,10 @@ info proc mappings
 本次同一运行中的关键实测：
 
 ```text
-PC in ld.so _start:  0x731fd98c7540
-AT_BASE:            0x731fd98a8000
-AT_ENTRY:           0x580bb75db0e0
-AT_PHDR:            0x580bb75da040
+PC in ld.so _start:  0x7f52bad1b540
+AT_BASE:            0x7f52bacfc000
+AT_ENTRY:           0x56419e6550e0
+AT_PHDR:            0x56419e654040
 AT_PHENT:           56
 AT_PHNUM:           13
 ```
@@ -926,12 +1253,12 @@ readelf -hW /lib64/ld-linux-x86-64.so.2
 
 ```text
 解释器初始 PC = AT_BASE + 解释器 e_entry
-              = 0x731fd98a8000 + 0x1f540
-              = 0x731fd98c7540
+              = 0x7f52bacfc000 + 0x1f540
+              = 0x7f52bad1b540
 
 主程序 load bias = AT_ENTRY - 主程序 e_entry
-                 = 0x580bb75db0e0 - 0x10e0
-                 = 0x580bb75da000
+                 = 0x56419e6550e0 - 0x10e0
+                 = 0x56419e654000
 
 AT_PHDR = 主程序 load bias + 0x40
 ```
@@ -951,7 +1278,9 @@ p global_counter
 p uninitialized_value
 ```
 
-本次 `_start` 断点停在主程序的 `0x580bb75db0e0`，等于 AT_ENTRY；此时映射中已出现 libcalc 与 libc。`_start` 同名符号可能对应多个位置，观察实际停点归属；也可根据**当前这次运行**的 AT_ENTRY 用 `tbreak *地址` 精确设置。
+本次 `_start` 断点停在主程序的 `0x56419e6550e0`，等于 AT_ENTRY；此时映射中已出现 libcalc 与 libc。`_start` 同名符号可能对应多个位置，观察实际停点归属；也可根据**当前这次运行**的 AT_ENTRY 用 `tbreak *地址` 精确设置。
+
+同一运行中，主程序原先的 `0x56419e657000–0x56419e659000 rw-p` 映射拆成了前一页 `r--p`、后一页 `rw-p`。程序头中的 RELRO 范围为 `B+0x3d78` 到 `B+0x4000`，与前一页在完成重定位后变为只读相符；不是整个数据 LOAD 都变为只读。
 
 在 main 起始处，本次两个变量分别为 10 和 0；程序之后才把它们更新成 110 和 3。
 
@@ -1055,7 +1384,7 @@ call foo@plt -> PLT 中的指令 -> GOT 对应槽 -> 实际目标
 
 ### 6.4 不先验证策略，就无法演示 lazy binding
 
-原始 elf_shared 和本文主线 elf_shared 都有 BIND_NOW，因此先准备两个独立对照：
+本文主线 elf_shared 显式设置了 BIND_NOW，不能用它直接演示延迟绑定，因此先准备两个独立对照：
 
 ```bash
 readelf -hW bind_lazy
@@ -1147,13 +1476,13 @@ done
 ```text
 bind_lazy:
 before first call: 0x404000 <add@got.plt>: 0x0000000000401030
-after first call:  0x404000 <add@got.plt>: 0x00007e2b15b170f9
-after second call: 0x404000 <add@got.plt>: 0x00007e2b15b170f9
+after first call:  0x404000 <add@got.plt>: 0x00007fefbfb3d0f9
+after second call: 0x404000 <add@got.plt>: 0x00007fefbfb3d0f9
 
 bind_now:
-before first call: 0x403fe0 <add@got.plt>: 0x00007d450deb10f9
-after first call:  0x403fe0 <add@got.plt>: 0x00007d450deb10f9
-after second call: 0x403fe0 <add@got.plt>: 0x00007d450deb10f9
+before first call: 0x403fe0 <add@got.plt>: 0x00007f7f6829a0f9
+after first call:  0x403fe0 <add@got.plt>: 0x00007f7f6829a0f9
+after second call: 0x403fe0 <add@got.plt>: 0x00007f7f6829a0f9
 ```
 
 两个进程的共享库基址不同，绝对函数地址不同是正常的；比较各自运行内部的变化。NOW / lazy 还会影响链接布局，不能要求二者槽地址相同。
@@ -1283,7 +1612,7 @@ program_ctor
   <- _start
 ```
 
-本机已有 glibc 调试信息，所以能显示内部函数；别的机器没有时，仍能在自编译的构造函数断点停住，系统库帧可能只有地址或 `??`。此时把准确内部调用者作为已核验源码的解释，不伪造本机 GDB 输出。
+当前容器已有与 libc 匹配的 `libc6-dbg 2.39-0ubuntu8.9`，关闭 debuginfod 后仍能显示上述内部函数及 `dl-init.c` / `libc-start.c` 源位置；不需要联网下载符号。别的机器没有调试信息时，仍能在自编译的构造函数断点停住，系统库帧可能只有地址或 `??`。此时把准确内部调用者作为源码解释，不伪造本机 GDB 输出。
 
 两个地方都叫 `call_init`，但属于不同组件；要结合所属对象和调用者理解。main 停点的 `bt` 也可能只显示 main 等有限帧，不能强求每个环境都能完整展开最早启动栈。
 
@@ -1383,7 +1712,7 @@ R_X86_64_JUMP_SLOT S
 
 以下为演讲前的操作清单，不要求现场完整展示：
 
-1. 从仓库根目录运行 walkthrough 的 make，而不是依赖外部目录旧产物；确认编译没有警告或错误。
+1. 从仓库根目录运行 walkthrough 的 make，而不是依赖外部目录旧产物；迁移或切换工具链后用 `make -B` 强制重建，确认编译没有警告或错误。
 2. 记录 gcc、ld、glibc、内核版本；readelf 核对架构、PIE、NOW、RUNPATH、NEEDED。
 3. 运行 elf_archive 与 elf_shared，确认加法 13、乘法 42、计数器 110、未初始化变量更新为 3。
 4. 用 nm / map / objdump 验证 add 的输入、输出地址和实际位移；地址变动后重新计算。
@@ -1392,7 +1721,23 @@ R_X86_64_JUMP_SLOT S
 7. 运行 startup，验证构造函数与 main 的顺序；有调试信息时对照调用栈。
 8. 完全静态与 strip 拓展单独执行；依赖不足或环境限制必须如实标注。
 
-本次上述核心步骤与两项拓展均已实测；构建产物及日志留在隔离输出目录，不纳入版本控制。正文截图位置是待演讲者替换的占位，不是假称已生成截图。
+### 当前容器复验记录（2026-10-28）
+
+以下均在当前容器实际执行，不是仅替换版本号；没有修改实验源码或构建选项来迎合旧输出。
+
+| 范围 | 本轮结果 / 关键证据 |
+|---|---|
+| 默认构建与第 1 章分步构建 | `make -B ... all optional-static` 及 chapter1 中的预处理、编译、汇编、归档、共享链接均成功，无编译警告 |
+| E1 / E2：对象与构建时链接 | `.text` 大小仍为 `0xcf`；add 重定位字段 `0x34`；归档成员触发符号为 global_counter；最终 `0x1238-4-0x119d=0x97` 与机器码一致 |
+| E3：依赖与输出 | archive 仅 NEEDED libc，共享版另需 libcalc；两者均输出 13、42、110、3，保存于 `archive.stdout` / `shared.stdout` |
+| ELF 双视图 | RW LOAD 的 filesz / memsz 仍为 `0x29c` / `0x2b0`；NEEDED、NOW、RUNPATH、COPY 重定位均已重新核对；静态检查记录于 `container-elf.log` |
+| E4：首次交接 | `entry.log`：starti 位于 ld.so，PC 等于 AT_BASE 加解释器入口；主程序入口等于 AT_ENTRY；依赖映射及 RELRO 权限变化可见，main 停点变量为 10 / 0 |
+| E5：查库与系统调用 | `loader.log` 使用 `$ORIGIN` RUNPATH 找到 libcalc，并记录 COPY 双向绑定；`syscalls.log` 记录成功的 openat / mmap / mprotect，进程以 0 退出 |
+| E6：lazy / NOW | `binding-lazy.log` / `binding-now.log` 的原脚本断言均通过；lazy 仅首次改变槽值，NOW 三次相同，最终目标均为 libcalc.so 的 add |
+| E7：启动初始化 | `startup.stdout` 顺序为 library constructor、program constructor、main；`startup-gdb.log` 中调用者分别为 `_dl_init` 和 `__libc_start_main_impl` |
+| 完全静态与 strip 拓展 | 静态程序无 INTERP / 动态节；strip 后无 `.symtab`、仍有 `.dynsym`；`static.stdout` / `stripped.stdout` 与共享版输出逐字节一致 |
+
+构建产物及本轮日志留在隔离输出目录，不纳入版本控制；第 1 章产物位于其 chapter1 子目录。重新构建不会自动重新采集日志，需执行各节观察命令；上述日志名用于定位本轮证据，交互式 GDB 会话也可自行保存。正文截图位置仍是待演讲者替换的占位，不是假称已生成截图。
 
 ## 参考资料与版本
 
