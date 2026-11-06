@@ -1,8 +1,5 @@
 # ELF 文件格式核心要点
 
-> 来源：《Executable and Linking Format (ELF) Specification, Version 1.2》，TIS Committee, May 1995（76 页正文，共 106 页）。
-> 本文用凝练语言提炼 ELF（Executable and Linking Format）最核心的概念，帮助建立对 ELF 文件格式的基本认识。主要面向 32 位架构（Intel Architecture / System V），现行 64 位格式在布局逻辑上一致。
-
 ##  ELF
 
 ELF 是一种**可执行与可链接文件格式**，最初由 UNIX System Laboratories 作为 ABI 的一部分发布，后由 TIS 委员会标准化。它是 Linux/Unix 等系统中目标文件、可执行文件和共享库的通用二进制格式。一条核心设计原则是：**同一文件从"链接"和"执行"两个视角观察，结构是并行的**。
@@ -382,6 +379,6 @@ readelf -r hello        # 重定位
 objdump -d hello        # 反汇编
 ```
 
-## 一句话总结
+## 总结
 
 > ELF 用"节"承载链接所需的符号/重定位数据、用"段"承载执行所需的装载与权限信息，再通过 ELF 头串联两者；动态链接则依赖程序解释器、`.dynamic` 节、GOT/PLT 与哈希表，在运行时完成符号解析与重定位。

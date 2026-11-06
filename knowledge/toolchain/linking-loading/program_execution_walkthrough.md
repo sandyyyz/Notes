@@ -1,9 +1,5 @@
 # 从 .o 到 main：一个 Linux 程序的链接、装载与启动
 
-> 分享母稿，面向了解 C、基础 Linux 和 ELF 的读者。主线为 Linux x86-64、ELF64、GCC / GNU binutils、glibc。
->
-> 不试图背下所有 ELF 字段，而是持续回答：**`add()` 怎么找到实现？`global_counter` 的地址怎么确定？`printf()` 怎么进入进程？谁最终调用 `main()`？**
-
 ## 阅读与演讲导航
 
 | 章节 | 核心问题 | 首轮分享取舍 |
@@ -17,9 +13,6 @@
 | [7. 到达 main](#startup-to-main) | 谁执行启动代码和构造函数？ | 必讲，闭合整条链 |
 | [附录](#experiment-index) | 如何复现、深入和排错？ | 按问题选讲 |
 
-这是一份详实母稿，不要求一次逐段讲完。首轮分享可以跳过 COPY 重定位、符号抢占、COMMON、TLS / IFUNC 和源码实现拓展；优先保留总流程图、一次重定位手算、一次入口观测和一次 GOT 回填实验。
-
-实验遵循“**提出问题 → 执行命令 → 阅读关键证据 → 得出结论**”。正文中的实测片段来自同一轮实验；省略的行用说明文字标识。所有地址、偏移、节索引和指令布局都不是跨环境保证。
 
 ### 实验来源与环境
 
@@ -28,8 +21,6 @@
 - [编译流程](../compilation/compile.md)、[ELF](../binary-format/elf.md)。
 - [GNU linker](linker.md)、[动态链接概览](dynamic_link.md)。
 - [execve 源码笔记](../../linux-kernel/execution/execve.md)。
-
-旧版基于 WSL2 开发环境编写；本版于 **2026-10-28** 在当前 container 中重新构建并验证，不再依赖旧环境的外部实验目录。实验源码直接使用仓库内的 [main.c](../../../labs/compiling-linking/src/main.c)、[calc.c](../../../labs/compiling-linking/src/calc.c)、[calc.h](../../../labs/compiling-linking/src/calc.h)。
 
 [walkthrough 实验](../../../labs/compiling-linking/walkthrough/Makefile) 复用这些源码，构建产物集中放到 gitignored 的 `labs/compiling-linking/output/program-execution-walkthrough/`，不改动原始实验源码。
 
@@ -563,6 +554,7 @@ readelf --dyn-syms -W libcalc.so
 3a: mov 0x0(%rip),%rax
 41: mov (%rax),%edx
 ```
+
 普通版本直接把结果写向 RIP 相对目标；PIC 版本先从 GOT 获取变量地址，再间接写入。  
 
 对于pic,对于能确定绑定在当前共享对象内部的符号，只需保持相对位置固定并使用 RIP/PC 相对寻址；对于装载地址和最终符号绑定都可能在运行时确定的全局符号，则通过 GOT 或 PLT 间接访问。
@@ -577,7 +569,7 @@ calc.pic.o                         ELF可重定位目标文件
 libcalc.so                         ELF共享对象
 ```
 
-g-fPIC` 生成位置无关代码，使共享库能在不同装载地址使用；它控制代码生成方式，不改变 `.o` 的文件格式。`calc.pic.o` 依然是 ET_REL，名字中的 `pic` 只是为了与另一份对象区分。
+`g-fPIC` 生成位置无关代码，使共享库能在不同装载地址使用；它控制代码生成方式，不改变 `.o` 的文件格式。`calc.pic.o` 依然是 ET_REL，名字中的 `pic` 只是为了与另一份对象区分。
 
 `-shared` 则要求链接器输出共享对象。本次 `libcalc.so` 的头与动态符号表部分内容如下，符号表省略编号和可见性：
 
@@ -590,7 +582,219 @@ Value             Size Type    Bind   Ndx Name
 0000000000004008     4 OBJECT  GLOBAL  20 global_counter
 ```
 
+输入 .o 中的信息 | 生成 .so 时的处理 |
+|---|---|
+| 多个 .text | 合并和布局为输出 .text |
+| 多个 .data | 合并和布局为输出 .data |
+| 多个 .bss | 合并并分配运行时空间 |
+| 多个 .rodata | 合并为输出只读数据 |
+| .symtab | 用于解析符号，可能保留完整静态符号表 |
+| .strtab | 配合 .symtab 使用 |
+| 全局导入、导出符号 | 筛选并生成 .dynsym、.dynstr |
+| .rela.text 等 | 能解决的立即执行，不能解决的转换为动态重定位 |
+| GOT 类型重定位需求 | 生成 .got 和 .rela.dyn |
+| PLT 类型调用需求 | 生成 .plt、.got.plt 和 .rela.plt |
+| Section 属性 | 生成输出 Section，并组织成 PT_LOAD Segment |
+| 共享库元数据 | 生成 .dynamic 和 PT_DYNAMIC |
+| -soname 参数 | 生成 DT_SONAME |
+| 调试 Section | 通常合并保留，但不装载 |
+
 首先，让我们先对比shared object (.so) 和 relocatable file (.o)文件结构上的区别，再借助.map尝试理解这个转换过程。  
+
+`calc.pic.o`中存在:
+```text
+
+  [ 2] .rela.text        RELA             0000000000000000  00000828
+       0000000000000078  0000000000000018   I      20     1     8
+```
+它描述`.text`中哪些机器指令仍需链接器修正，如：  
+- 内部数据的RIP相对引用
+- 通过GOT访问全局变量的引用
+- 函数调用
+- 对.rodata的引用
+
+比如：
+
+```asm
+  37:   89 7d fc                mov    %edi,-0x4(%rbp)
+  3a:   48 8b 05 00 00 00 00    mov    0x0(%rip),%rax        # 41 <update_counter+0x12> 3d: R_X86_64_REX_GOTPCRELX      global_counter-0x4
+  41:   8b 10                   mov    (%rax),%edx
+```
+这是链接期的重定位， 当引用位置和目标符号最终位于同一个输出 ELF 文件中时，链接器已经知道二者的布局和相对距离，因此可以直接修正指令或数据中的占位值。  
+
+与之对应的，还存在运行时的动态重定位。  
+当符号位于另一个共享库中、允许符号抢占，或者其地址依赖共享库的实际装载基址时，静态链接器无法确定:  
+- 依赖库运行时装载到哪个地址；
+- 符号最终由哪个共享对象提供；
+- ASLR 为各共享对象选择什么基址。
+
+因此，链接器只能生成 .rela.dyn、.rela.plt 等动态重定位记录，程序启动时由动态链接器确定最终地址，并填写 GOT 等位置。  
+
+因此，`libcalc.so`中存在：
+```text
+
+  [ 6] .rela.dyn         RELA             00000000000004b8  000004b8
+       00000000000000d8  0000000000000018   A       4     0     8
+```
+其内容为：
+
+```text
+Relocation section '.rela.dyn' at offset 0x4b8 contains 9 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000003e48  000000000008 R_X86_64_RELATIVE                    10f0
+000000003e50  000000000008 R_X86_64_RELATIVE                    10b0
+000000004000  000000000008 R_X86_64_RELATIVE                    4000
+000000003fb8  000100000006 R_X86_64_GLOB_DAT 0000000000000000 __cxa_finalize + 0
+000000003fc0  000800000006 R_X86_64_GLOB_DAT 0000000000004008 global_counter + 0
+000000003fc8  000200000006 R_X86_64_GLOB_DAT 0000000000000000 _ITM_registerTMCl[...] + 0
+000000003fd0  000500000006 R_X86_64_GLOB_DAT 0000000000004014 uninitialized_value + 0
+000000003fd8  000300000006 R_X86_64_GLOB_DAT 0000000000000000 _ITM_deregisterTM[...] + 0
+000000003fe0  000400000006 R_X86_64_GLOB_DAT 0000000000000000 __gmon_start__ + 0
+```
+
+除此以外，还存在`.dynsym`和`.dynstr`和`.rela.dyn`相互配合。  
+
+- `.dynsym`：动态符号条目
+- `.dynstr`：符号名称字符串
+
+`.rela.dyn` 中的重定位项可以引用 .dynsym 中的符号，动态链接器再根据符号名和搜索顺序确定最终定义  
+
+还存在`.dynamic`
+```text
+huangzs@79601732f18d:~/workspace/labs/compling_lab$ readelf -d libcalc.so
+
+Dynamic section at offset 0x2e58 contains 18 entries:
+  Tag        Type                         Name/Value
+ 0x000000000000000e (SONAME)             Library soname: [libcalc.so]
+ 0x000000000000000c (INIT)               0x1000
+ 0x000000000000000d (FINI)               0x1174
+ 0x0000000000000019 (INIT_ARRAY)         0x3e48
+ 0x000000000000001b (INIT_ARRAYSZ)       8 (bytes)
+ 0x000000000000001a (FINI_ARRAY)         0x3e50
+ 0x000000000000001c (FINI_ARRAYSZ)       8 (bytes)
+ 0x000000006ffffef5 (GNU_HASH)           0x2f0
+ 0x0000000000000005 (STRTAB)             0x418
+ 0x0000000000000006 (SYMTAB)             0x328
+ 0x000000000000000a (STRSZ)              159 (bytes)
+ 0x000000000000000b (SYMENT)             24 (bytes)
+ 0x0000000000000003 (PLTGOT)             0x3fe8
+ 0x0000000000000007 (RELA)               0x4b8
+ 0x0000000000000008 (RELASZ)             216 (bytes)
+ 0x0000000000000009 (RELAENT)            24 (bytes)
+ 0x000000006ffffff9 (RELACOUNT)          3
+ 0x0000000000000000 (NULL)               0x0
+ ```
+ 它是动态链接器的总目录，记录：
+
+- `.dynsym`、`.dynstr` 的位置；
+- `.rela.dyn` 的位置和大小；
+- `GOT`的位置；
+- SONAME；
+- 依赖库；
+- 初始化、终止数组。
+
+这里还存在两种绑定机制：  
+
+```text
+.got
+    GOT的基本区域
+
+初始内容：
+
+huangzs@79601732f18d:~/workspace/labs/compling_lab$ objdump -s -j .got libcalc.so
+
+libcalc.so:     file format elf64-x86-64
+
+Contents of section .got:
+ 3fb8 00000000 00000000 00000000 00000000  ................
+ 3fc8 00000000 00000000 00000000 00000000  ................
+ 3fd8 00000000 00000000 00000000 00000000  ................
+
+.got.plt
+    GOT区域中供PLT使用的子区域
+
+初始内容：
+
+huangzs@79601732f18d:~/workspace/labs/compling_lab$ objdump -s -j .got.plt libcalc.so
+
+libcalc.so:     file format elf64-x86-64
+
+Contents of section .got.plt:
+ 3fe8 583e0000 00000000 00000000 00000000  X>..............
+ 3ff8 00000000 00000000                    ........
+
+.plt
+    PLT的基本代码区域
+
+反汇编：
+
+0000000000001020 <.plt>:
+    1020:       ff 35 ca 2f 00 00       push   0x2fca(%rip)        # 3ff0 <_GLOBAL_OFFSET_TABLE_+0x8>
+    1026:       ff 25 cc 2f 00 00       jmp    *0x2fcc(%rip)        # 3ff8 <_GLOBAL_OFFSET_TABLE_+0x10>
+    102c:       0f 1f 40 00             nopl   0x0(%rax)
+
+.plt.got
+    PLT代码中通过普通GOT跳转的子区域
+
+反汇编：
+
+huangzs@79601732f18d:~/workspace/labs/compling_lab$ objdump -d -j .plt.got libcalc.so
+
+libcalc.so:     file format elf64-x86-64
+
+
+Disassembly of section .plt.got:
+
+0000000000001030 <__cxa_finalize@plt>:
+    1030:       f3 0f 1e fa             endbr64
+    1034:       ff 25 7e 2f 00 00       jmp    *0x2f7e(%rip)        # 3fb8 <__cxa_finalize>
+    103a:       66 0f 1f 44 00 00       nopw   0x0(%rax,%rax,1)
+```
+
+对比项 | .plt + .got.plt | .plt.got + .got |
+|---|---|---|
+| 常见绑定方式 | 延迟绑定 | 启动时绑定 |
+| 地址存放位置 | .got.plt | .got |
+| 对应动态重定位 | .rela.plt 中的 JUMP_SLOT | .rela.dyn 中的 GLOB_DAT |
+| 首次调用 | 可能进入动态链接器解析 | 通常直接跳向目标 |
+| 后续调用 | 通过已更新的 .got.plt 跳转 | 通过 .got 跳转 |
+| 是否需要 PLT0 | 延迟绑定时需要 | 通常不需要 |
+| 启动开销 | 较低 | 较高 |
+| 首次调用开销 | 较高 | 无首次解析开销 |
+| GOT 写保护 | 延迟绑定需要保持相应槽位可写 | 完成启动重定位后可设为只读 |
+
+当前libcalc.so还缺少一个section：  
+
+Section | 常见作用 | 典型重定位类型 | 常见目标位置 |
+|---|---|---|---|
+| .rela.plt | 外部函数的传统 PLT 绑定 | R_X86_64_JUMP_SLOT | .got.plt |
+| .rela.dyn | 一般装载时动态重定位 | RELATIVE、GLOB_DAT 等 | .got、.data、初始化数组 |
+
+动态链接器根据 PLT 传来的重定位索引定位 .rela.plt 条目，再通过条目中的符号索引查询 .dynsym 和 .dynstr，找到最终函数地址并写回 .got.plt。.dynamic 中的 DT_JMPREL、DT_PLTRELSZ 等条目描述 .rela.plt 的位置和大小。  
+
+比如：  
+```
+Relocation section '.rela.plt':
+
+Offset      Type                 Symbol
+0x4018      R_X86_64_JUMP_SLOT  puts
+0x4020      R_X86_64_JUMP_SLOT  printf
+
+把puts的最终地址写入0x4018处的GOT槽位
+把printf的最终地址写入0x4020处的GOT槽位
+```
+
+由一个或多个可重定位文件生成动态库时，链接器主要完成：  
+
+- 合并和重新布局输入 Section
+- 解析各 .o 之间能够确定的符号引用
+- 执行链接时能够完成的重定位
+- 将运行时才能确定的引用转换为动态重定位
+- 生成 .dynsym、.dynstr 和符号哈希表
+- 按需生成 GOT、PLT、.rela.dyn 和 .rela.plt
+- 生成 .dynamic，记录 SONAME、依赖和动态表位置
+- 创建 Program Header 和可装载 Segment
+- 将 ELF 类型从 ET_REL 变为 ET_DYN
 
 生成共享库并不意味着所有地址都已确定。它如何通过位置无关寻址、GOT 和动态重定位适应装载地址，第六章再展开。
 
@@ -598,7 +802,7 @@ Value             Size Type    Bind   Ndx Name
 
 #### 链接：选择实现来源并形成输出布局
 
-有了 `main.o` 和两种库，分别生成两个程序指令 → GOT槽位 → global_counter地址 → global_counter值：
+分别生成 `elf_archive`和`elf_shared`两个程序  
 
 ```bash
 gcc -pie main.o ./libcalc.a \
@@ -611,13 +815,31 @@ gcc -pie main.o ./libcalc.so \
   -o elf_shared
 ```
 
-这里显式写出 `.a` 和 `.so`，不使用 `-lcalc`，避免库搜索优先级改变对照结果。原始实验中的 `elf_static` 只有“使用 calc 静态库”的意图，本文命名为 `elf_archive`，因为它仍然动态依赖 libc。
+两者都是 PIE 动态可执行文件，因为即使 elf_archive 静态链接了 libcalc.a，仍然动态依赖 libc.so、动态加载器等系统库。因此 file 都显示 dynamically linked。真正区别是 calc 模块以何种方式进入程序。  
 
-`gcc` 是工具链驱动：根据输入和选项调用工具，链接时还自动加入启动对象与系统库。上面的显式输入不是全部输入；我们只写了 `main`，启动入口仍由启动对象提供。
+对于`elf_archive`, 链接器从 libcalc.a 中提取包含所需符号的 calc.o，把其中代码和数据复制、合并进 `elf_archive`。静态库本质是目标文件归档，所需成员会进入最终可执行文件  
+对于`elf_shared`, 链接时不会把 libcalc.so 的代码复制进程序，而是在 `elf_shared` 中记录对该共享库的运行时依赖。启动时动态链接器加载 libcalc.so，解析 add 等符号。共享库与可执行文件保持独立  
 
-构建时的链接器（这里是 GNU ld）要查找符号定义、组织输出节和地址，并完成能确定的重定位。它既能处理归档，也能生成共享库和动态程序；“静态链接器”不表示它只会处理静态库。运行时的动态链接器则是另一份程序。
+```sh
+huangzs@79601732f18d:~/workspace/labs/compling_lab$ readelf -dW elf_archive | grep NEEDED
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+huangzs@79601732f18d:~/workspace/labs/compling_lab$ readelf -dW elf_shared  | grep -E 'NEEDED|RUNPATH'
+ 0x0000000000000001 (NEEDED)             Shared library: [libcalc.so]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000001d (RUNPATH)            Library runpath: [$ORIGIN]
+```
+可以看到`elf_archive`没有对`libcalc.so`的依赖， 与此同时， 查看add函数的符号状态：  
 
-命令中，`-pie` 生成位置无关可执行文件，与前面的 `-fPIE` 配合；`-Wl,` 后的参数传给链接器。`-Map` 输出布局报告；`-z relro`、`-z now` 固定本例的保护和绑定策略，第六章再用独立程序对比延迟绑定。`-rpath` 与 new dtags 生成的查库信息在下面查看。
+```sh
+
+huangzs@79601732f18d:~/workspace/labs/compling_lab$ readelf -sW elf_archive | grep ' add$'
+    27: 0000000000001238    24 FUNC    GLOBAL DEFAULT   16 add
+huangzs@79601732f18d:~/workspace/labs/compling_lab$ readelf -sW elf_shared | grep ' add$'
+     4: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND add
+    24: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND add
+
+```
+可以看到`elf_archive`中存在`add`的定义， 而对于`elf_shared`是`UND`  
 
 #### 可执行 ELF：除了代码，还有装载说明和依赖
 
@@ -626,22 +848,68 @@ readelf -hW elf_shared
 readelf -lW elf_shared
 ```
 
-头部显示本例主程序也是 `DYN`，入口为 `0x10e0`：
+`elf_header`显示`elf_shared`为`DYN`，入口为 `0x10e0`：
 
 ```text
 Type:                              DYN (Position-Independent Executable file)
 Entry point address:               0x10e0
 ```
 
-PIE 主程序和普通共享库都使用 `ET_DYN`，但用途不同，不能只看类型就认定它是库。这里的入口值要结合装载地址解释，也不是 `main` 的运行时地址。
-
-`readelf -lW` 读取程序头表。下面摘录解释器和可执行装载段，保留列标题：
+`readelf -lW` 读取程序头表。
 
 ```text
-Type    Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
-INTERP  0x000318 0x0000000000000318 0x0000000000000318 0x00001c 0x00001c R   0x1
-    [Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
-LOAD    0x001000 0x0000000000001000 0x0000000000001000 0x0002a5 0x0002a5 R E 0x1000
+huangzs@79601732f18d:~/workspace/labs/compling_lab$ readelf -l elf_archive
+
+Elf file type is DYN (Position-Independent Executable file)
+Entry point 0x1080
+There are 13 program headers, starting at offset 64
+
+Program Headers:
+  Type           Offset             VirtAddr           PhysAddr
+                 FileSiz            MemSiz              Flags  Align
+  PHDR           0x0000000000000040 0x0000000000000040 0x0000000000000040
+                 0x00000000000002d8 0x00000000000002d8  R      0x8
+  INTERP         0x0000000000000318 0x0000000000000318 0x0000000000000318
+                 0x000000000000001c 0x000000000000001c  R      0x1
+      [Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
+  LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000000660 0x0000000000000660  R      0x1000
+  LOAD           0x0000000000001000 0x0000000000001000 0x0000000000001000
+                 0x00000000000002b5 0x00000000000002b5  R E    0x1000
+  LOAD           0x0000000000002000 0x0000000000002000 0x0000000000002000
+                 0x00000000000001fc 0x00000000000001fc  R      0x1000
+  LOAD           0x0000000000002db0 0x0000000000003db0 0x0000000000003db0
+                 0x000000000000026c 0x0000000000000278  RW     0x1000
+  DYNAMIC        0x0000000000002dc0 0x0000000000003dc0 0x0000000000003dc0
+                 0x00000000000001f0 0x00000000000001f0  RW     0x8
+  NOTE           0x0000000000000338 0x0000000000000338 0x0000000000000338
+                 0x0000000000000030 0x0000000000000030  R      0x8
+  NOTE           0x0000000000000368 0x0000000000000368 0x0000000000000368
+                 0x0000000000000044 0x0000000000000044  R      0x4
+  GNU_PROPERTY   0x0000000000000338 0x0000000000000338 0x0000000000000338
+                 0x0000000000000030 0x0000000000000030  R      0x8
+  GNU_EH_FRAME   0x00000000000020a4 0x00000000000020a4 0x00000000000020a4
+                 0x000000000000004c 0x000000000000004c  R      0x4
+  GNU_STACK      0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000000000 0x0000000000000000  RW     0x10
+  GNU_RELRO      0x0000000000002db0 0x0000000000003db0 0x0000000000003db0
+                 0x0000000000000250 0x0000000000000250  R      0x1
+
+ Section to Segment mapping:
+  Segment Sections...
+   00
+   01     .interp
+   02     .interp .note.gnu.property .note.gnu.build-id .note.ABI-tag .gnu.hash .dynsym .dynstr .gnu.version .gnu.version_r .rela.dyn .rela.plt
+   03     .init .plt .plt.got .plt.sec .text .fini
+   04     .rodata .eh_frame_hdr .eh_frame
+   05     .init_array .fini_array .dynamic .got .data .bss
+   06     .dynamic
+   07     .note.gnu.property
+   08     .note.gnu.build-id .note.ABI-tag
+   09     .note.gnu.property
+   10     .eh_frame_hdr
+   11
+   12     .init_array .fini_array .dynamic .got
 ```
 
 与节头表按内容分类不同，程序头表描述装载和执行所需的信息。`LOAD` 指定一段（Segment）映射范围，包括文件偏移、虚拟地址、文件与内存大小、权限和对齐；这里 `R E` 表示可读、可执行。这段包含 `.text` 等多个节，并不是一个节对应一个段。
@@ -667,7 +935,7 @@ readelf -dW elf_shared | grep -E 'NEEDED|RUNPATH'
 0x000000000000001d (RUNPATH)            Library runpath: [$ORIGIN]
 ```
 
-这些是 ELF 动态信息中的记录，不是额外的配置文件。`NEEDED` 说明依赖的共享库；本例 `RUNPATH` 中的 `$ORIGIN` 由动态链接器展开为程序所在目录，用来找到旁边的 `libcalc.so`。命令中的单引号防止 shell 提前展开它。
+这些是 ELF 动态信息中的记录。`NEEDED` 说明依赖的共享库；本例 `RUNPATH` 中的 `$ORIGIN` 由动态链接器展开为程序所在目录，用来找到旁边的 `libcalc.so`。  
 
 两个程序都依赖 libc，所以 `elf_archive` 不是完全静态程序。它不需要运行时再打开 `libcalc.a`；`elf_shared` 则仍需要可找到的 `libcalc.so`。
 
@@ -720,7 +988,7 @@ uninitialized_value = 3
 
 ### 1.7 从构建产物到程序运行
 
-构建到这里已经完成。执行 `./elf_shared` 时，不会重新编译源码，也不会依次读取 `.i`、`.s`、`.o` 和 `.a`。对于本例动态程序，接下来的过程简述为：
+构建到这里已经完成。对于本例动态程序，接下来的过程简述为：
 
 ```text
 执行 elf_shared，发起 execve
